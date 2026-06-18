@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #1c1c1e;
+  --cream: #f5f0e8;
+  --gold: #d4a853;
+  --done: #1d9e75;
+  --rule: rgba(28, 28, 30, 0.07);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background-color: var(--cream);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Ruled-paper texture for the briefing panel: faint horizontal lines. */
+.ruled-paper {
+  background-color: var(--cream);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 31px,
+    var(--rule) 31px,
+    var(--rule) 32px
+  );
+}
+
+/* Vertical amber/gold margin line, like a notebook. */
+.margin-line {
+  position: relative;
+}
+.margin-line::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2.75rem;
+  width: 1.5px;
+  background: var(--gold);
+  opacity: 0.55;
+}
+
+/* Thin progress bar fill animation. */
+.progress-fill {
+  transition: width 0.4s ease;
+}
+
+/* Subtle staggered fade-in for briefing items. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise {
+  animation: rise 0.45s ease both;
+}
+
+/* Goal progress range slider thumb. */
+.goal-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 99px;
+  background: var(--ink);
+  cursor: pointer;
+  border: 2px solid var(--cream);
+}
+.goal-range::-moz-range-thumb {
+  height: 12px;
+  width: 12px;
+  border-radius: 99px;
+  background: var(--ink);
+  cursor: pointer;
+  border: 2px solid var(--cream);
+}
+
+/* Custom slim scrollbar for the chat column. */
+.slim-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.slim-scroll::-webkit-scrollbar-thumb {
+  background: rgba(28, 28, 30, 0.15);
+  border-radius: 99px;
+}
+.slim-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
