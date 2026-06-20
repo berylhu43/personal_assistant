@@ -1,0 +1,25 @@
+[package]
+name = "personal-assistant"
+version = "0.2.0"
+description = "Always-on desktop memo assistant"
+authors = ["you"]
+edition = "2021"
+
+# Library target lets the same code power desktop + (future) mobile entry points.
+[lib]
+name = "personal_assistant_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-store = "2"
+tauri-plugin-http = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-google-auth = "0.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = "0.4"

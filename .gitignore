@@ -1,28 +1,24 @@
 # dependencies
-/node_modules
-/.pnp
-.pnp.js
+node_modules
 
-# next.js
-/.next/
-/out/
+# build output
+dist
+dist-ssr
 
-# production
-/build
-
-# misc
+# vite / logs
+*.log
 .DS_Store
-*.pem
 
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# local env files
+# env & secrets (never commit)
 .env
 .env*.local
 
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+# local app data — Anthropic key, tokens, database
+settings.json
+*.db
+*.db-journal
+*.sqlite
+
+# Rust / Tauri build artifacts
+src-tauri/target
+src-tauri/gen

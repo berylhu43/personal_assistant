@@ -1,112 +1,151 @@
-# Personal Assistant
+# Personal Assistant — Desktop Memo
 
-A desktop, memo-style dashboard that acts as a proactive personal assistant.
+An always-on, frameless desktop memo widget that acts as a proactive personal
+assistant. It floats on top of your screen showing your goals (collapsed), and
+expands into a chat + daily-briefing panel that reads your Google Calendar and
+Gmail and plans your week with you.
 
-- **Left panel** — a daily briefing on ruled "paper": today's & tomorrow's calendar, emails that need action, and a goal tracker.
-- **Right panel** — a multi-turn chat with an assistant that knows your day, helps break goals into weekly plans, surfaces dependencies/reminders, and can add events straight to your calendar.
-
-Built with Next.js 14 (App Router), TypeScript, Tailwind CSS, the Anthropic SDK (server-side only), and Google Calendar + Gmail via NextAuth (Google OAuth 2.0).
+Built with **Tauri 2** (Rust shell) + **React + TypeScript (Vite)**. All
+business logic — SQLite, Anthropic calls, Google API calls, memory — lives in
+the TypeScript layer. Rust is only the shell: window management, system tray,
+and the daily 9 AM timer.
 
 ---
 
-## Quick start
+## How it works
+
+- **Collapsed (default):** a small always-on-top window showing just your goal
+  todolist.
+- **Expanded:** a larger window that adds the daily briefing + chat panel.
+  Toggle with the `›` button in the header or the tray menu.
+- **System tray:** Show / Hide, Expand / Collapse, Quit. The window remembers
+  the last position you left it in.
+- **Daily briefing:** at **09:00** local time, if today's briefing doesn't exist
+  yet, it fetches your calendar + email, asks Claude for a short summary and a
+  list of proactive items (prep reminders, dependencies), saves it, and expands
+  the window to show it. At **10:00** it collapses back to the todolist.
+- **Chat with memory:** every turn is saved to SQLite. The system prompt is
+  built from today's date, your calendar, pending emails, everything the
+  assistant has remembered, and the last ~20 messages. The assistant can emit
+  fenced action blocks that the app executes and hides:
+  - ` ```add-event ` → creates a Google Calendar event
+  - ` ```goal ` → adds a goal (with an optional weekly plan) to your todolist
+  - ` ```remember ` → stores a durable fact/preference in the `memories` table
+
+---
+
+## Prerequisites
+
+1. **Rust toolchain** (required by Tauri). Install via [rustup](https://rustup.rs):
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+2. **Node.js 18+** and npm.
+3. **Platform deps** for Tauri 2 — see the
+   [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+   On macOS this is just the Xcode Command Line Tools (`xcode-select --install`).
+
+---
+
+## Setup
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in the values (see below)
-npm run dev
+cp .env.example .env          # fill in your Google OAuth client id/secret
+npm run tauri dev             # IMPORTANT: run inside Tauri, not `npm run dev`
 ```
 
-Open http://localhost:3000 and sign in with Google.
+> **Why not `npm run dev`?** `tauri-plugin-sql` only works inside the Tauri
+> runtime. Opening the Vite dev server in a plain browser will fail on every DB
+> call. Always use `npm run tauri dev`.
+
+On first launch: sign in with Google, then open **Settings (⚙)** and paste your
+**Anthropic API key**. The key is stored locally in `settings.json` and never
+committed or sent anywhere except the Anthropic API.
+
+To build a distributable app: `npm run tauri build`.
 
 ---
 
 ## Environment variables
 
-Create `.env.local` with:
+`.env` (gitignored), read by Vite at build time:
 
 | Variable | What it is |
 | --- | --- |
-| `ANTHROPIC_API_KEY` | Your Anthropic API key. Used only on the server. |
-| `GOOGLE_CLIENT_ID` | OAuth 2.0 client ID from Google Cloud Console. |
-| `GOOGLE_CLIENT_SECRET` | OAuth 2.0 client secret. |
-| `NEXTAUTH_SECRET` | Random secret for NextAuth. Generate with `openssl rand -base64 32`. |
-| `NEXTAUTH_URL` | App base URL, e.g. `http://localhost:3000`. |
+| `VITE_GOOGLE_CLIENT_ID` | OAuth 2.0 **Web application** client ID. |
+| `VITE_GOOGLE_CLIENT_SECRET` | OAuth 2.0 client secret. |
 
-Get an Anthropic key at <https://console.anthropic.com/>.
+The **Anthropic API key** is *not* an env var — enter it in the in-app Settings
+panel (stored in the local `settings.json` via `tauri-plugin-store`).
 
 ---
 
-## Setting up Google OAuth credentials
+## Plugins used
 
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create (or select) a project.
-2. **Enable the APIs.** APIs & Services → **Library** → enable both:
-   - **Google Calendar API**
-   - **Gmail API**
-3. **Configure the OAuth consent screen.** APIs & Services → **OAuth consent screen**:
-   - User type: **External** (fine for personal use).
-   - Add your Google account under **Test users** (required while the app is unverified).
-   - Add the following **scopes**:
-     - `.../auth/userinfo.email`
-     - `.../auth/userinfo.profile`
-     - `https://www.googleapis.com/auth/calendar.readonly`
-     - `https://www.googleapis.com/auth/calendar.events`
-     - `https://www.googleapis.com/auth/gmail.readonly`
-4. **Create credentials.** APIs & Services → **Credentials** → **Create Credentials** → **OAuth client ID**:
-   - Application type: **Web application**.
-   - **Authorized JavaScript origins:** `http://localhost:3000`
-   - **Authorized redirect URIs:** `http://localhost:3000/api/auth/callback/google`
-   - Copy the **Client ID** and **Client secret** into `.env.local`.
-
-> When you deploy, add your production origin and `https://YOUR_DOMAIN/api/auth/callback/google` as an authorized redirect URI, and set `NEXTAUTH_URL` to the production URL.
-
-### Scopes requested by this app
-
-| Scope | Why |
+| Plugin | Purpose |
 | --- | --- |
-| `calendar.readonly` | Read today's & tomorrow's events for the briefing. |
-| `calendar.events` | Create events the assistant proposes. |
-| `gmail.readonly` | Find unread/starred threads from the last 48h that need action. |
-| `openid email profile` | Basic sign-in and your display name. |
+| `tauri-plugin-sql` (sqlite) | Local database `sqlite:assistant.db`, with versioned migrations. |
+| `tauri-plugin-store` | Stores the Anthropic API key + current user id locally. |
+| `tauri-plugin-http` | Calls Anthropic & Google APIs from Rust transport (no browser CORS). |
+| `@choochmeque/tauri-plugin-google-auth` | Desktop Google OAuth (PKCE + loopback redirect + refresh). |
+| `tauri-plugin-window-state` | Remembers the window position only. |
 
 ---
 
-## API routes
+## Google OAuth setup
 
-| Route | Method | Purpose |
-| --- | --- | --- |
-| `/api/chat` | POST | `{ messages, calendarEvents, pendingEmails }` → assistant reply (Claude, server-side). |
-| `/api/calendar/today` | GET | Today's + tomorrow's events. |
-| `/api/gmail/pending` | GET | Unread/starred inbox threads from the last 48h, with a heuristic action tag. |
-| `/api/calendar/add-event` | POST | `{ title, date, startTime?, endTime?, description? }` → creates a calendar event. |
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create a
+   project and **enable** the **Google Calendar API** and **Gmail API**.
+2. **OAuth consent screen** → External. Add yourself under **Test users**. Add
+   these scopes:
+   - `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile`
+   - `https://www.googleapis.com/auth/calendar.readonly`
+   - `https://www.googleapis.com/auth/calendar.events`
+   - `https://www.googleapis.com/auth/gmail.readonly`
+3. **Credentials** → **Create Credentials** → **OAuth client ID** →
+   **Application type: Web application**.
+   - Under **Authorized redirect URIs**, add `http://localhost`.
+     The desktop plugin runs a loopback redirect server and allocates the port
+     dynamically, so the bare `http://localhost` entry is what's required.
+   - Copy the **Client ID** and **Client secret** into `.env`.
 
-The chat model is `claude-sonnet-4-6`. When it proposes scheduling time, it emits a fenced ` ```add-event ` JSON block; the chat UI turns that into a one-click **Add to calendar** button.
+---
+
+## Database schema
+
+Migrations live in `src-tauri/src/lib.rs` (declared to the SQL plugin; the
+queries themselves are all in `src/lib/*.ts`). Tables: `users`, `google_tokens`,
+`goals`, `memories`, `messages`, `briefings`.
 
 ---
 
 ## Project structure
 
 ```
-app/
-  api/
-    auth/[...nextauth]/route.ts   NextAuth (Google OAuth + token refresh)
-    chat/route.ts                 Anthropic chat
-    calendar/today/route.ts       Read events
-    calendar/add-event/route.ts   Create event
-    gmail/pending/route.ts        Read action-needed email
-  layout.tsx, page.tsx, providers.tsx, globals.css
-components/
-  BriefingPanel.tsx  ChatPanel.tsx  GoalTracker.tsx  SignInScreen.tsx
-lib/
-  auth.ts  google.ts  types.ts
-types/
-  next-auth.d.ts
+src/
+  App.tsx                 Orchestrator: auth, expand/collapse, tray+timer events
+  components/             SignInScreen · GoalTracker · BriefingPanel · ChatPanel · Settings
+  lib/
+    db.ts                 Database.load + typed query helpers
+    auth.ts               Google sign-in, token upsert, getValidAccessToken()
+    google.ts             getTodayEvents · getPendingEmails · createEvent
+    anthropic.ts          chat() → Anthropic Messages API (claude-sonnet-4-6)
+    chat.ts               memory-aware prompt, persistence, fenced-block actions
+    goals.ts memory.ts briefing.ts   CRUD wrappers over db.ts
+    store.ts              Anthropic key + current user id
+    types.ts
+src-tauri/
+  src/lib.rs              Shell: migrations, tray, window sizing, daily timer
+  src/main.rs
+  tauri.conf.json         Frameless, alwaysOnTop, skipTaskbar window
+  capabilities/default.json
 ```
 
 ---
 
-## Notes & current scope
+## Security & scope notes
 
-- **Goals** persist in `localStorage` only (no database yet).
-- Single-user; no push notifications or scheduled emails yet.
-- The Anthropic API key never reaches the browser — all model calls go through `/api/chat`.
+- The Anthropic key and all Google tokens stay on the local machine.
+  `settings.json` and `*.db` are gitignored — never commit secrets.
+- Single-user; no push notifications or scheduled emails (out of scope for now).
