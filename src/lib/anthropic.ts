@@ -14,9 +14,10 @@ export class MissingApiKeyError extends Error {
 }
 
 /**
- * Call the Anthropic Messages API. Goes through the Tauri HTTP plugin (Rust
- * transport) so there is no browser CORS restriction. The key is read from the
- * local store and never hardcoded.
+ * Call the Anthropic Messages API. The request goes through
+ * @tauri-apps/plugin-http, which executes on the native (Rust) layer — there is
+ * no WebView involvement, no Origin header, and therefore no CORS at all. The
+ * key is read from the local store and never hardcoded.
  */
 export async function chat(
   messages: ChatMessage[],
@@ -32,9 +33,6 @@ export async function chat(
       "content-type": "application/json",
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
-      // The webview sends an Origin header, so Anthropic treats this as a
-      // browser request. Safe here: the key is stored locally in a desktop app.
-      "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({
       model: MODEL,

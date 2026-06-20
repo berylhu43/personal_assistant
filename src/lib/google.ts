@@ -10,6 +10,13 @@ async function authHeaders(): Promise<Record<string, string>> {
   return { Authorization: `Bearer ${token}` };
 }
 
+/** Local calendar date as YYYY-MM-DD (no UTC shift). */
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
 /** Today's + tomorrow's events from the primary calendar. */
 export async function getTodayEvents(): Promise<CalendarEvent[]> {
   const headers = await authHeaders();
@@ -20,6 +27,9 @@ export async function getTodayEvents(): Promise<CalendarEvent[]> {
   startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
   const endOfTomorrow = new Date(startOfToday);
   endOfTomorrow.setDate(endOfTomorrow.getDate() + 2);
+
+  const todayStr = localDateStr(startOfToday);
+  const tomorrowStr = localDateStr(startOfTomorrow);
 
   const params = new URLSearchParams({
     timeMin: startOfToday.toISOString(),
@@ -40,8 +50,16 @@ export async function getTodayEvents(): Promise<CalendarEvent[]> {
     const allDay = !e.start?.dateTime;
     const start = e.start?.dateTime ?? e.start?.date ?? "";
     const end = e.end?.dateTime ?? e.end?.date ?? "";
+    // For all-day events `start` is a bare YYYY-MM-DD (parsing it as a Date
+    // would treat it as UTC midnight and misclassify near the day boundary in
+    // non-UTC zones); for timed events use the local date of the timestamp.
+    const eventDateStr = allDay ? start : localDateStr(new Date(start));
     const day: "today" | "tomorrow" =
-      new Date(start) < startOfTomorrow ? "today" : "tomorrow";
+      eventDateStr === todayStr
+        ? "today"
+        : eventDateStr === tomorrowStr
+          ? "tomorrow"
+          : "today";
     return {
       id: e.id ?? crypto.randomUUID(),
       title: e.summary ?? "(no title)",
@@ -134,10 +152,16 @@ export async function createEvent(ev: NewEvent): Promise<{ htmlLink?: string }> 
     body.start = { dateTime: `${ev.date}T${ev.startTime}:00`, timeZone };
     body.end = { dateTime: `${ev.date}T${ev.endTime}:00`, timeZone };
   } else {
-    const next = new Date(`${ev.date}T00:00:00`);
-    next.setDate(next.getDate() + 1);
+    // All-day end date is exclusive. Compute it from local date components —
+    // toISOString().slice(0,10) would shift the date east of UTC (off-by-one).
+    const d = new Date(`${ev.date}T12:00:00`); // noon avoids DST edges
+    d.setDate(d.getDate() + 1);
+    const end = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+      2,
+      "0"
+    )}-${String(d.getDate()).padStart(2, "0")}`;
     body.start = { date: ev.date };
-    body.end = { date: next.toISOString().slice(0, 10) };
+    body.end = { date: end };
   }
 
   const res = await fetch(`${CAL_BASE}/calendars/primary/events`, {
