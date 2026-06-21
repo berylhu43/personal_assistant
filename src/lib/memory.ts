@@ -1,5 +1,33 @@
 import { select, selectOne, execute, uid } from "./db";
+import {
+  isRelativeMemoriesPurged,
+  setRelativeMemoriesPurged,
+} from "./store";
 import type { Memory, MemoryRow, MemoryKind } from "./types";
+
+// Relative-time words that indicate a memory was a transient event/appointment
+// rather than a durable fact. Used by the one-time cleanup below.
+const RELATIVE_TIME_WORDS = [
+  "tomorrow",
+  "today",
+  "tonight",
+  "yesterday",
+  "this weekend",
+  "next weekend",
+  "this week",
+  "next week",
+  "this month",
+  "next month",
+  "明天", // tomorrow
+  "今天", // today
+  "昨天", // yesterday
+  "后天", // day after tomorrow
+  "今晚", // tonight
+  "这周", // this week
+  "本周", // this week
+  "下周", // next week
+  "周末", // weekend
+];
 
 // Cap how many memories feed the system prompt so it stays bounded as memory
 // grows; newest first.
@@ -16,6 +44,7 @@ export async function listMemories(userId: string): Promise<Memory[]> {
     kind: r.kind as MemoryKind,
     content: r.content,
     source: r.source,
+    createdAt: r.created_at,
   }));
 }
 
@@ -37,6 +66,30 @@ export async function addMemory(input: {
     `INSERT INTO memories (id, user_id, kind, content, source) VALUES (?1, ?2, ?3, ?4, ?5)`,
     [uid(), input.userId, input.kind, input.content, input.source ?? "chat"]
   );
+}
+
+/**
+ * One-time cleanup of stale, time-relative memories (e.g. "meeting tomorrow")
+ * that should never have been stored as durable facts. Guarded by a store flag
+ * so it runs at most once. Durable preferences are untouched.
+ */
+export async function purgeRelativeTimeMemories(userId: string): Promise<void> {
+  if (await isRelativeMemoriesPurged()) return;
+
+  // ?1 = userId; ?2..?N = LIKE patterns for each relative-time word.
+  const clauses = RELATIVE_TIME_WORDS.map(
+    (_, i) => `lower(content) LIKE ?${i + 2}`
+  ).join(" OR ");
+  const params = [
+    userId,
+    ...RELATIVE_TIME_WORDS.map((w) => `%${w.toLowerCase()}%`),
+  ];
+  await execute(
+    `DELETE FROM memories WHERE user_id = ?1 AND (${clauses})`,
+    params
+  );
+
+  await setRelativeMemoriesPurged();
 }
 
 /**

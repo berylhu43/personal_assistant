@@ -72,7 +72,9 @@ function formatEmails(emails: PendingEmail[]): string {
 
 function formatMemories(memories: Memory[]): string {
   if (!memories.length) return "  (nothing remembered yet)";
-  return memories.map((m) => `  - (${m.kind}) ${m.content}`).join("\n");
+  return memories
+    .map((m) => `  - (${m.kind}, noted ${m.createdAt.slice(0, 10)}) ${m.content}`)
+    .join("\n");
 }
 
 export function buildSystemPrompt(
@@ -122,6 +124,10 @@ You can take actions by emitting fenced JSON blocks anywhere in your reply. The 
 \`\`\`remember
 { "kind": "fact" | "preference" | "goal_note", "content": "..." }
 \`\`\`
+Rules for \`remember\` — follow strictly:
+- Only remember durable, time-stable facts and preferences, e.g. "prefers morning meetings", "is learning AI agents", "allergic to nuts".
+- NEVER remember specific appointments/events, or anything phrased relative to the current time ("tomorrow", "today", "tonight", "this weekend", "next week", "明天", "今天"). Specific dated commitments belong in the calendar — use the \`add-event\` block, not \`remember\`.
+- If something time-bound genuinely must be recorded, write the absolute date (e.g. "2026-06-18"), never a relative word. Today's date is given above for reference.
 
 Always also write a normal, friendly message for the user alongside any blocks.`;
 }

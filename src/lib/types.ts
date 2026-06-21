@@ -74,6 +74,7 @@ export interface Memory {
   kind: MemoryKind;
   content: string;
   source: string | null;
+  createdAt: string; // ISO/SQLite datetime
 }
 
 export interface ChatMessage {

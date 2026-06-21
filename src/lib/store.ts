@@ -15,6 +15,7 @@ function store(): Promise<Store> {
 const KEY_ANTHROPIC = "anthropic_api_key";
 const KEY_LOCAL_USER = "local_user_id";
 const KEY_CONSOLIDATED = "data_consolidated_v1";
+const KEY_RELATIVE_PURGED = "memories_purged_relative_v1";
 
 export async function getApiKey(): Promise<string | null> {
   const s = await store();
@@ -49,4 +50,14 @@ export async function isDataConsolidated(): Promise<boolean> {
 export async function setDataConsolidated(): Promise<void> {
   const s = await store();
   await s.set(KEY_CONSOLIDATED, true);
+}
+
+export async function isRelativeMemoriesPurged(): Promise<boolean> {
+  const s = await store();
+  return (await s.get<boolean>(KEY_RELATIVE_PURGED)) === true;
+}
+
+export async function setRelativeMemoriesPurged(): Promise<void> {
+  const s = await store();
+  await s.set(KEY_RELATIVE_PURGED, true);
 }

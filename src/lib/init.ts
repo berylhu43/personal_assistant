@@ -4,7 +4,7 @@ import {
   isDataConsolidated,
   setDataConsolidated,
 } from "./store";
-import { dedupeMemories } from "./memory";
+import { dedupeMemories, purgeRelativeTimeMemories } from "./memory";
 import type { GoogleTokensRow } from "./types";
 
 /**
@@ -72,5 +72,7 @@ export async function initApp(): Promise<string> {
     await consolidateData(localId);
     await setDataConsolidated();
   }
+  // One-time purge of stale time-relative memories (self-guarded).
+  await purgeRelativeTimeMemories(localId);
   return localId;
 }
