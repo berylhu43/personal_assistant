@@ -4,11 +4,12 @@ import {
   refreshToken as googleRefresh,
 } from "@choochmeque/tauri-plugin-google-auth-api";
 import { execute, selectOne } from "./db";
-import { setCurrentUserId, getCurrentUserId } from "./store";
+import { getLocalUserId } from "./store";
 import type { User, GoogleTokensRow } from "./types";
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = import.meta.env.VITE_GOOGLE_CLIENT_SECRET;
+
 
 export const SCOPES = [
   "openid",
@@ -32,7 +33,11 @@ interface IdClaims {
 function decodeIdToken(idToken: string): IdClaims | null {
   try {
     const payload = idToken.split(".")[1];
-    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    // UTF-8 safe so non-ASCII names aren't garbled.
+    const b64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const json = new TextDecoder().decode(
+      Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+    );
     return JSON.parse(json);
   } catch {
     return null;
@@ -45,26 +50,29 @@ function expiresAtIso(expiresAtSeconds: number | undefined): string {
 }
 
 /**
- * Run the Google OAuth flow, then upsert the user and their tokens.
- * Returns the signed-in user.
+ * Run the Google OAuth flow and store the tokens against the stable local user
+ * id (NOT anything derived from the Google response). Google email/name are
+ * stored only as display labels. Returns the local user.
  */
 export async function signIn(): Promise<User> {
+  const localId = await getLocalUserId();
+
   const res = await googleSignIn({
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
     scopes: SCOPES,
   });
 
-  const claims = res.idToken ? decodeIdToken(res.idToken) : null;
-  const userId = claims?.sub ?? res.accessToken.slice(0, 24);
-  const email = claims?.email ?? "unknown@local";
-  const name = claims?.name ?? null;
 
-  await execute(
-    `INSERT INTO users (id, email, name) VALUES (?1, ?2, ?3)
-     ON CONFLICT(id) DO UPDATE SET email = excluded.email, name = excluded.name`,
-    [userId, email, name]
-  );
+  // Display labels only — never used as an identity/ownership key.
+  const claims = res.idToken ? decodeIdToken(res.idToken) : null;
+  if (claims?.email || claims?.name) {
+    await execute(`UPDATE users SET email = ?1, name = ?2 WHERE id = ?3`, [
+      claims.email ?? "local@assistant",
+      claims.name ?? null,
+      localId,
+    ]);
+  }
 
   await execute(
     `INSERT INTO google_tokens (user_id, access_token, refresh_token, expires_at, updated_at)
@@ -74,51 +82,58 @@ export async function signIn(): Promise<User> {
        refresh_token = excluded.refresh_token,
        expires_at = excluded.expires_at,
        updated_at = datetime('now')`,
-    [userId, res.accessToken, res.refreshToken ?? "", expiresAtIso(res.expiresAt)]
+    [localId, res.accessToken, res.refreshToken ?? "", expiresAtIso(res.expiresAt)]
   );
 
-  await setCurrentUserId(userId);
   return getCurrentUser() as Promise<User>;
 }
 
+/** Disconnect Google: revoke + drop the token row. Local data is untouched. */
 export async function signOut(): Promise<void> {
-  const userId = await getCurrentUserId();
-  if (userId) {
-    const row = await selectOne<GoogleTokensRow>(
-      `SELECT * FROM google_tokens WHERE user_id = ?1`,
-      [userId]
-    );
-    if (row?.access_token) {
-      // Best-effort revoke; ignore failures.
-      try {
-        await googleSignOut({ accessToken: row.access_token });
-      } catch {
-        /* noop */
-      }
+  const localId = await getLocalUserId();
+  const row = await selectOne<GoogleTokensRow>(
+    `SELECT * FROM google_tokens WHERE user_id = ?1`,
+    [localId]
+  );
+  if (row?.access_token) {
+    // Best-effort revoke; ignore failures.
+    try {
+      await googleSignOut({ accessToken: row.access_token });
+    } catch {
+      /* noop */
     }
   }
-  await setCurrentUserId(null);
+  await execute(`DELETE FROM google_tokens WHERE user_id = ?1`, [localId]);
 }
 
+/** The local user row (always exists once ensureLocalUser has run). */
 export async function getCurrentUser(): Promise<User | null> {
-  const userId = await getCurrentUserId();
-  if (!userId) return null;
-  return selectOne<User>(`SELECT * FROM users WHERE id = ?1`, [userId]);
+  const localId = await getLocalUserId();
+  return selectOne<User>(`SELECT * FROM users WHERE id = ?1`, [localId]);
+}
+
+/** True when a usable Google connection exists (token row with a refresh token). */
+export async function isGoogleConnected(): Promise<boolean> {
+  const localId = await getLocalUserId();
+  const row = await selectOne<GoogleTokensRow>(
+    `SELECT * FROM google_tokens WHERE user_id = ?1`,
+    [localId]
+  );
+  return !!row && !!row.refresh_token && row.refresh_token.trim() !== "";
 }
 
 /**
- * Return a valid access token for the current user, refreshing first if it is
+ * Return a valid access token for the local user, refreshing first if it is
  * within 60s of expiry (and persisting the refreshed token).
  */
 export async function getValidAccessToken(): Promise<string> {
-  const userId = await getCurrentUserId();
-  if (!userId) throw new Error("Not signed in");
+  const localId = await getLocalUserId();
 
   const row = await selectOne<GoogleTokensRow>(
     `SELECT * FROM google_tokens WHERE user_id = ?1`,
-    [userId]
+    [localId]
   );
-  if (!row) throw new Error("No tokens stored for current user");
+  if (!row) throw new Error("Google is not connected");
 
   const expiresMs = new Date(row.expires_at).getTime();
   if (expiresMs - Date.now() > REFRESH_SKEW_MS) {
@@ -144,7 +159,7 @@ export async function getValidAccessToken(): Promise<string> {
       refreshed.accessToken,
       refreshed.refreshToken ?? row.refresh_token,
       expiresAtIso(refreshed.expiresAt),
-      userId,
+      localId,
     ]
   );
 

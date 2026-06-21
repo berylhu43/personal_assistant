@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import * as auth from "./lib/auth";
+import { initApp } from "./lib/init";
 import { getApiKey } from "./lib/store";
 import { getTodayEvents, getPendingEmails } from "./lib/google";
 import { getBriefing, generateBriefing } from "./lib/briefing";
@@ -62,15 +63,24 @@ export default function App() {
     [loadDayData]
   );
 
-  // Initial load: restore an existing session if present.
+  // Initial load: ensure the local user + run one-time consolidation, then
+  // decide the view based on whether Google is connected. The app always has a
+  // local user, so data is never gated on (or reset by) Google login.
   useEffect(() => {
-    auth
-      .getCurrentUser()
-      .then((u) => {
-        if (u) void finishSignIn(u);
-        else setStatus("signed-out");
-      })
-      .catch(() => setStatus("signed-out"));
+    (async () => {
+      try {
+        await initApp();
+        const u = await auth.getCurrentUser();
+        setUser(u);
+        if (u && (await auth.isGoogleConnected())) {
+          await finishSignIn(u);
+        } else {
+          setStatus("signed-out");
+        }
+      } catch {
+        setStatus("signed-out");
+      }
+    })();
   }, [finishSignIn]);
 
   // Toggle expand/collapse (shared by UI button + tray).
@@ -89,7 +99,7 @@ export default function App() {
 
     listen("briefing-due", async () => {
       const u = userRef.current;
-      if (!u) return;
+      if (!u || !(await auth.isGoogleConnected())) return;
       setLoadingBriefing(true);
       try {
         const existing = await getBriefing(u.id);
@@ -115,8 +125,9 @@ export default function App() {
   }
 
   async function handleSignOut() {
+    // Disconnect Google only — the local user (and its goals/memory/history)
+    // stays intact.
     await auth.signOut();
-    setUser(null);
     setEvents([]);
     setEmails([]);
     setBriefing(null);

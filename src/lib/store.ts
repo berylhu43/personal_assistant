@@ -1,6 +1,6 @@
 import { load, Store } from "@tauri-apps/plugin-store";
 
-// Local settings store — holds the Anthropic API key and the signed-in user id.
+// Local settings store — holds the Anthropic API key and a stable local user id.
 // Stays on the local machine; never committed (settings.json is gitignored).
 
 let storePromise: Promise<Store> | null = null;
@@ -13,7 +13,8 @@ function store(): Promise<Store> {
 }
 
 const KEY_ANTHROPIC = "anthropic_api_key";
-const KEY_USER_ID = "current_user_id";
+const KEY_LOCAL_USER = "local_user_id";
+const KEY_CONSOLIDATED = "data_consolidated_v1";
 
 export async function getApiKey(): Promise<string | null> {
   const s = await store();
@@ -25,13 +26,27 @@ export async function setApiKey(key: string): Promise<void> {
   await s.set(KEY_ANTHROPIC, key.trim());
 }
 
-export async function getCurrentUserId(): Promise<string | null> {
+/**
+ * The permanent local user id for this installation. Independent of Google
+ * login — generated once and reused forever, so local data (goals, memory,
+ * chat history) is never reset by signing in/out of Google.
+ */
+export async function getLocalUserId(): Promise<string> {
   const s = await store();
-  return (await s.get<string>(KEY_USER_ID)) ?? null;
+  let id = await s.get<string>(KEY_LOCAL_USER);
+  if (!id) {
+    id = crypto.randomUUID();
+    await s.set(KEY_LOCAL_USER, id);
+  }
+  return id;
 }
 
-export async function setCurrentUserId(id: string | null): Promise<void> {
+export async function isDataConsolidated(): Promise<boolean> {
   const s = await store();
-  if (id) await s.set(KEY_USER_ID, id);
-  else await s.delete(KEY_USER_ID);
+  return (await s.get<boolean>(KEY_CONSOLIDATED)) === true;
+}
+
+export async function setDataConsolidated(): Promise<void> {
+  const s = await store();
+  await s.set(KEY_CONSOLIDATED, true);
 }
