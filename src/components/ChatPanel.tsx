@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { runChatTurn, recentMessages } from "../lib/chat";
+import { runChatTurn, clearMessages } from "../lib/chat";
+import { distillConversation } from "../lib/distill";
 import { MissingApiKeyError } from "../lib/anthropic";
 import type { CalendarEvent, PendingEmail, ChatMessage } from "../lib/types";
 
@@ -12,26 +13,25 @@ export default function ChatPanel({
   events,
   emails,
   onGoalCreated,
+  onCommitmentCreated,
   onNeedApiKey,
+  onClose,
 }: {
   userId: string;
   events: CalendarEvent[];
   emails: PendingEmail[];
   onGoalCreated: () => void;
+  onCommitmentCreated: () => void;
   onNeedApiKey: () => void;
+  onClose: () => void;
 }) {
+  // Conversations are ephemeral: the UI ALWAYS starts empty on launch and never
+  // replays a prior conversation (the messages table is the live session only).
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [closing, setClosing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    recentMessages(userId, 50)
-      .then((rows) =>
-        setMessages(rows.map((m) => ({ ...m, id: crypto.randomUUID() })))
-      )
-      .catch(() => setMessages([]));
-  }, [userId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -57,6 +57,7 @@ export default function ChatPanel({
         { id: crypto.randomUUID(), role: "assistant", content: result.reply },
       ]);
       if (result.createdGoal) onGoalCreated();
+      if (result.createdCommitment) onCommitmentCreated();
     } catch (e) {
       if (e instanceof MissingApiKeyError) {
         onNeedApiKey();
@@ -85,8 +86,42 @@ export default function ChatPanel({
     }
   }
 
+  // End & save: distill the conversation into durable stores, clear it, and
+  // collapse to the todo view. If distillation fails, keep the transcript so the
+  // next launch retries — but still reset the UI.
+  async function endAndSave() {
+    if (closing) return;
+    setClosing(true);
+    let distilled = false;
+    try {
+      await distillConversation(userId);
+      distilled = true;
+    } catch {
+      /* keep transcript for next-launch retry */
+    }
+    if (distilled) {
+      await clearMessages(userId);
+    }
+    setMessages([]);
+    setInput("");
+    setClosing(false);
+    onClose();
+  }
+
   return (
     <div className="flex h-full flex-col bg-white">
+      <header className="no-drag flex items-center justify-between border-b border-ink/10 px-4 py-2">
+        <span className="font-serif text-sm text-ink">Conversation</span>
+        <button
+          onClick={() => void endAndSave()}
+          disabled={closing}
+          className="rounded-full border border-ink/15 px-3 py-1 font-sans text-xs font-medium text-ink/70 transition hover:border-gold hover:text-ink disabled:opacity-50"
+          title="Distill this conversation into goals, commitments & memory, then close it"
+        >
+          {closing ? "Saving…" : "End & save"}
+        </button>
+      </header>
+
       <div
         ref={scrollRef}
         className="slim-scroll selectable flex-1 space-y-3 overflow-y-auto px-5 py-4"

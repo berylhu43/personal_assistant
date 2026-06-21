@@ -147,7 +147,25 @@ CREATE TABLE IF NOT EXISTS briefings (
   UNIQUE(user_id, date)
 );
 "#,
-    }]
+        },
+        Migration {
+            version: 2,
+            description: "local calendar (commitments not synced to Google)",
+            kind: MigrationKind::Up,
+            sql: r#"
+CREATE TABLE IF NOT EXISTS calendar (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  date TEXT NOT NULL,
+  time TEXT,
+  source TEXT,
+  done INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"#,
+        },
+    ]
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -51,6 +51,17 @@ export interface BriefingRow {
   created_at: string;
 }
 
+export interface CommitmentRow {
+  id: string;
+  user_id: string;
+  title: string;
+  date: string; // absolute YYYY-MM-DD
+  time: string | null; // optional HH:mm
+  source: string | null;
+  done: number; // 0 | 1
+  created_at: string;
+}
+
 // ---- App-facing shapes ----
 
 export interface Goal {
@@ -75,6 +86,16 @@ export interface Memory {
   content: string;
   source: string | null;
   createdAt: string; // ISO/SQLite datetime
+}
+
+export interface Commitment {
+  id: string;
+  title: string;
+  date: string; // absolute YYYY-MM-DD
+  time: string | null; // optional HH:mm
+  done: boolean;
+  source: string | null;
+  createdAt: string;
 }
 
 export interface ChatMessage {

@@ -5,6 +5,8 @@ import {
   setDataConsolidated,
 } from "./store";
 import { dedupeMemories, purgeRelativeTimeMemories } from "./memory";
+import { hasMessages, clearMessages } from "./chat";
+import { distillConversation } from "./distill";
 import type { GoogleTokensRow } from "./types";
 
 /**
@@ -74,5 +76,18 @@ export async function initApp(): Promise<string> {
   }
   // One-time purge of stale time-relative memories (self-guarded).
   await purgeRelativeTimeMemories(localId);
+
+  // A non-empty messages table at launch means a previous session was quit
+  // without closing. Distill it, then clear. Best-effort: if distillation
+  // fails (e.g. no API key yet), keep the rows and retry on the next launch.
+  if (await hasMessages(localId)) {
+    try {
+      await distillConversation(localId);
+      await clearMessages(localId);
+    } catch {
+      /* keep the transcript; retry next launch */
+    }
+  }
+
   return localId;
 }

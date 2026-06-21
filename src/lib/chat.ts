@@ -2,6 +2,7 @@ import { select, execute, uid } from "./db";
 import { chat } from "./anthropic";
 import { createEvent } from "./google";
 import { createGoal } from "./goals";
+import { createCommitment } from "./localCalendar";
 import { addMemory } from "./memory";
 import { listMemories } from "./memory";
 import type {
@@ -28,9 +29,15 @@ export async function addMessage(
   );
 }
 
+/**
+ * The CURRENT conversation's messages in chronological order (capped). The
+ * messages table holds only the active session — it is cleared when the
+ * conversation closes (or distilled + cleared on next launch), so this is not a
+ * cross-session replay.
+ */
 export async function recentMessages(
   userId: string,
-  limit = 20
+  limit = 50
 ): Promise<ChatMessage[]> {
   const rows = await select<MessageRow>(
     `SELECT * FROM messages WHERE user_id = ?1
@@ -44,6 +51,20 @@ export async function recentMessages(
   // Anthropic requires the first message to be from the user.
   while (msgs.length && msgs[0].role !== "user") msgs.shift();
   return msgs;
+}
+
+/** Clear the current conversation's messages (called after distillation). */
+export async function clearMessages(userId: string): Promise<void> {
+  await execute(`DELETE FROM messages WHERE user_id = ?1`, [userId]);
+}
+
+/** Whether any session messages exist (e.g. a session left over from a prior run). */
+export async function hasMessages(userId: string): Promise<boolean> {
+  const row = await select<{ one: number }>(
+    `SELECT 1 AS one FROM messages WHERE user_id = ?1 LIMIT 1`,
+    [userId]
+  );
+  return row.length > 0;
 }
 
 // ---- system prompt ----
@@ -108,45 +129,61 @@ Behaviors:
 - Be proactive about prep for meetings happening tomorrow.
 - Keep replies concise, warm, and practical.
 
-You can take actions by emitting fenced JSON blocks anywhere in your reply. The app parses and executes them, then hides them from the user. Use them when appropriate:
+You can take actions by emitting fenced JSON blocks anywhere in your reply. The app parses and executes them, then hides them from the user.
 
-1. Add a calendar event:
-\`\`\`add-event
-{ "title": "...", "date": "YYYY-MM-DD", "startTime": "HH:mm", "endTime": "HH:mm", "description": "..." }
-\`\`\`
+CRITICAL — explicit only: emit a block ONLY for an action the user EXPLICITLY requests in their current message (e.g. "add X to my todos", "remind me to buy milk Saturday", "put this on my Google Calendar"). Do NOT opportunistically save things merely mentioned in passing — durable info is captured automatically when the conversation ends, so there is no need to record it mid-chat. When in doubt, emit nothing and just reply.
 
-2. Save a goal to the user's todo list (with an optional weekly plan):
+1. Save a goal to the user's todo list (with an optional weekly plan):
 \`\`\`goal
 { "title": "...", "plan": [ { "week": 1, "focus": "..." } ] }
 \`\`\`
 
-3. Remember a durable fact/preference about the user:
+2. Remember a durable fact/preference about the user:
 \`\`\`remember
 { "kind": "fact" | "preference" | "goal_note", "content": "..." }
 \`\`\`
 Rules for \`remember\` — follow strictly:
-- Only remember durable, time-stable facts and preferences, e.g. "prefers morning meetings", "is learning AI agents", "allergic to nuts".
-- NEVER remember specific appointments/events, or anything phrased relative to the current time ("tomorrow", "today", "tonight", "this weekend", "next week", "明天", "今天"). Specific dated commitments belong in the calendar — use the \`add-event\` block, not \`remember\`.
-- If something time-bound genuinely must be recorded, write the absolute date (e.g. "2026-06-18"), never a relative word. Today's date is given above for reference.
+- Only durable, time-stable facts/preferences, e.g. "prefers morning meetings", "is learning AI agents", "allergic to nuts".
+- NEVER appointments/events or anything phrased relative to time ("tomorrow", "this weekend", "明天", "今天"). Dated commitments belong in the local calendar — use the \`commitment\` block.
+
+3. Add a discrete dated commitment to the LOCAL calendar (stays on this machine, not synced to Google):
+\`\`\`commitment
+{ "title": "...", "date": "YYYY-MM-DD", "time": "HH:mm", "note": "..." }
+\`\`\`
+Use an ABSOLUTE date (resolve "tomorrow"/"Friday" against today's date above). "time" and "note" are optional. This is the default for reminders and dated to-dos.
+
+4. Add an event to the user's GOOGLE Calendar — ONLY when the user explicitly asks to put something on their Google Calendar:
+\`\`\`add-event
+{ "title": "...", "date": "YYYY-MM-DD", "startTime": "HH:mm", "endTime": "HH:mm", "description": "..." }
+\`\`\`
+Never auto-create Google Calendar events from general statements; default to \`commitment\` instead.
 
 Always also write a normal, friendly message for the user alongside any blocks.`;
 }
 
 // ---- block parsing ----
 
+interface ParsedCommitment {
+  title: string;
+  date: string;
+  time?: string;
+}
+
 interface ParsedActions {
   clean: string;
   events: NewEvent[];
   goals: { title: string; plan?: WeeklyPlanItem[] }[];
   memories: { kind: MemoryKind; content: string }[];
+  commitments: ParsedCommitment[];
 }
 
-const BLOCK_RE = /```(add-event|goal|remember)\s*([\s\S]*?)```/g;
+const BLOCK_RE = /```(add-event|goal|remember|commitment)\s*([\s\S]*?)```/g;
 
 export function parseBlocks(raw: string): ParsedActions {
   const events: NewEvent[] = [];
   const goals: { title: string; plan?: WeeklyPlanItem[] }[] = [];
   const memories: { kind: MemoryKind; content: string }[] = [];
+  const commitments: ParsedCommitment[] = [];
 
   let match: RegExpExecArray | null;
   while ((match = BLOCK_RE.exec(raw)) !== null) {
@@ -158,13 +195,15 @@ export function parseBlocks(raw: string): ParsedActions {
         goals.push({ title: json.title, plan: json.plan });
       else if (kind === "remember" && json.content)
         memories.push({ kind: json.kind ?? "fact", content: json.content });
+      else if (kind === "commitment" && json.title && json.date)
+        commitments.push({ title: json.title, date: json.date, time: json.time });
     } catch {
       /* skip malformed block */
     }
   }
 
   const clean = raw.replace(BLOCK_RE, "").replace(/\n{3,}/g, "\n\n").trim();
-  return { clean, events, goals, memories };
+  return { clean, events, goals, memories, commitments };
 }
 
 // ---- one chat turn ----
@@ -173,6 +212,7 @@ export interface ChatTurnResult {
   reply: string;
   createdGoal: boolean;
   createdEvent: boolean;
+  createdCommitment: boolean;
 }
 
 /**
@@ -194,10 +234,17 @@ export async function runChatTurn(
 
   const system = buildSystemPrompt(ctx.events, ctx.emails, memories);
   const raw = await chat(history, system);
-  const { clean, events, goals, memories: newMemories } = parseBlocks(raw);
+  const {
+    clean,
+    events,
+    goals,
+    memories: newMemories,
+    commitments,
+  } = parseBlocks(raw);
 
   let createdEvent = false;
   let createdGoal = false;
+  let createdCommitment = false;
 
   for (const ev of events) {
     try {
@@ -214,9 +261,19 @@ export async function runChatTurn(
   for (const m of newMemories) {
     await addMemory({ userId, kind: m.kind, content: m.content });
   }
+  for (const c of commitments) {
+    await createCommitment({
+      userId,
+      title: c.title,
+      date: c.date,
+      time: c.time ?? null,
+      source: "chat",
+    });
+    createdCommitment = true;
+  }
 
   const visible = clean || "Done.";
   await addMessage(userId, "assistant", visible);
 
-  return { reply: visible, createdGoal, createdEvent };
+  return { reply: visible, createdGoal, createdEvent, createdCommitment };
 }

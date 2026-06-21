@@ -1,7 +1,18 @@
 import { selectOne, execute, uid } from "./db";
 import { getTodayEvents, getPendingEmails } from "./google";
+import { listTodayAndOverdue } from "./localCalendar";
+import { listGoals } from "./goals";
+import { listMemories } from "./memory";
 import { chat } from "./anthropic";
-import type { Briefing, BriefingRow, CalendarEvent, PendingEmail } from "./types";
+import type {
+  Briefing,
+  BriefingRow,
+  CalendarEvent,
+  PendingEmail,
+  Commitment,
+  Goal,
+  Memory,
+} from "./types";
 
 /** Local date as YYYY-MM-DD. */
 export function todayStr(d = new Date()): string {
@@ -69,17 +80,46 @@ function formatEmails(emails: PendingEmail[]): string {
     .join("\n");
 }
 
+function formatCommitments(commitments: Commitment[], today: string): string {
+  if (!commitments.length) return "  (none)";
+  return commitments
+    .map((c) => {
+      const overdue = c.date < today ? " (OVERDUE)" : "";
+      const when = c.time ? `${c.date} ${c.time}` : c.date;
+      return `  - ${when}${overdue} — ${c.title}`;
+    })
+    .join("\n");
+}
+
+function formatGoals(goals: Goal[]): string {
+  if (!goals.length) return "  (none)";
+  return goals
+    .map((g) => `  - ${g.title} (${g.progress}%)`)
+    .join("\n");
+}
+
+function formatMemoriesForBriefing(memories: Memory[]): string {
+  if (!memories.length) return "  (none)";
+  return memories.slice(0, 20).map((m) => `  - ${m.content}`).join("\n");
+}
+
 const BRIEFING_SYSTEM = `You write a short morning briefing for a personal assistant memo widget.
-Given today's calendar and pending emails, respond ONLY with JSON of the form:
+You are given today's Google Calendar events, the user's LOCAL commitments (today + overdue), open goals, long-term memory, and pending emails. Respond ONLY with JSON of the form:
 { "summary": "2-3 warm, concise sentences about the day", "notes": ["proactive item", "..."] }
-Notes should surface prep reminders for meetings, dependencies (e.g. buy ingredients the day before baking), and timely email replies. Return 0-5 notes. No prose outside the JSON.`;
+The summary and notes should reflect local commitments and goals, not just the calendar. Notes should surface prep reminders for meetings, overdue/today commitments, goal nudges, dependencies (e.g. buy ingredients the day before baking), and timely email replies. Return 0-5 notes. No prose outside the JSON.`;
 
 /** Fetch context, ask Claude, persist, and return today's briefing. */
 export async function generateBriefing(userId: string): Promise<Briefing> {
-  const [events, emails] = await Promise.all([
+  const dateKey = todayStr();
+  const [events, emails, commitments, goals, memories] = await Promise.all([
     getTodayEvents().catch(() => [] as CalendarEvent[]),
     getPendingEmails().catch(() => [] as PendingEmail[]),
+    listTodayAndOverdue(userId, dateKey).catch(() => [] as Commitment[]),
+    listGoals(userId).catch(() => [] as Goal[]),
+    listMemories(userId).catch(() => [] as Memory[]),
   ]);
+
+  const openGoals = goals.filter((g) => !g.done);
 
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
@@ -89,8 +129,17 @@ export async function generateBriefing(userId: string): Promise<Briefing> {
 
   const userMsg = `Today is ${today}.
 
-Calendar (today + tomorrow):
+Google Calendar (today + tomorrow):
 ${formatEvents(events)}
+
+Local commitments (today + overdue):
+${formatCommitments(commitments, dateKey)}
+
+Open goals:
+${formatGoals(openGoals)}
+
+Long-term memory about the user:
+${formatMemoriesForBriefing(memories)}
 
 Pending emails (last 48h):
 ${formatEmails(emails)}`;

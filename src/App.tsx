@@ -11,6 +11,7 @@ import type { User, CalendarEvent, PendingEmail, Briefing } from "./lib/types";
 
 import SignInScreen from "./components/SignInScreen";
 import GoalTracker from "./components/GoalTracker";
+import LocalCalendar from "./components/LocalCalendar";
 import BriefingPanel from "./components/BriefingPanel";
 import ChatPanel from "./components/ChatPanel";
 import Settings from "./components/Settings";
@@ -35,6 +36,7 @@ export default function App() {
   const [loadingBriefing, setLoadingBriefing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [goalsRefresh, setGoalsRefresh] = useState(0);
+  const [calendarRefresh, setCalendarRefresh] = useState(0);
 
   const userRef = useRef<User | null>(null);
   userRef.current = user;
@@ -135,6 +137,14 @@ export default function App() {
     await toggleExpanded(false);
   }
 
+  // After a conversation is distilled & closed: refresh the left panel (goals +
+  // commitments may have changed) and collapse back to the todo view.
+  const handleCloseConversation = useCallback(async () => {
+    setGoalsRefresh((n) => n + 1);
+    setCalendarRefresh((n) => n + 1);
+    await toggleExpanded(false);
+  }, [toggleExpanded]);
+
   const dateStr = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -209,6 +219,13 @@ export default function App() {
               <div className="mt-2">
                 <GoalTracker userId={user.id} refreshKey={goalsRefresh} />
               </div>
+
+              <p className="mt-8 font-sans text-[10px] uppercase tracking-[0.2em] text-gold">
+                Upcoming
+              </p>
+              <div className="mt-2">
+                <LocalCalendar userId={user.id} refreshKey={calendarRefresh} />
+              </div>
             </section>
 
             {/* Chat column — only when expanded */}
@@ -226,7 +243,9 @@ export default function App() {
                     events={events}
                     emails={emails}
                     onGoalCreated={() => setGoalsRefresh((n) => n + 1)}
+                    onCommitmentCreated={() => setCalendarRefresh((n) => n + 1)}
                     onNeedApiKey={() => setShowSettings(true)}
+                    onClose={() => void handleCloseConversation()}
                   />
                 </div>
               </section>

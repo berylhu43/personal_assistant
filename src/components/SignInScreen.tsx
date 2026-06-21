@@ -20,7 +20,14 @@ export default function SignInScreen({
     try {
       await onSignIn();
     } catch (e: any) {
-      setError(e?.message ?? "Sign-in failed");
+      // The Tauri plugin often rejects with a plain string, so e.message is
+      // undefined — surface whatever shape the error actually is.
+      console.error("sign-in error:", e);
+      const msg =
+        typeof e === "string"
+          ? e
+          : e?.message ?? (e ? JSON.stringify(e) : "");
+      setError(msg || "Sign-in failed");
     } finally {
       setBusy(false);
     }
