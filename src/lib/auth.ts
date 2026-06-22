@@ -57,11 +57,18 @@ function expiresAtIso(expiresAtSeconds: number | undefined): string {
 export async function signIn(): Promise<User> {
   const localId = await getLocalUserId();
 
-  const res = await googleSignIn({
+  // Request offline access + forced consent so Google reliably returns a
+  // refresh token (it otherwise omits it on repeat authorizations). These keys
+  // aren't in the plugin's typed options, so we pass them via a variable
+  // (avoids the excess-property check); the plugin forwards/ignores them.
+  const signInOpts = {
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
     scopes: SCOPES,
-  });
+    access_type: "offline",
+    prompt: "consent",
+  };
+  const res = await googleSignIn(signInOpts);
 
 
   // Display labels only — never used as an identity/ownership key.
@@ -112,14 +119,23 @@ export async function getCurrentUser(): Promise<User | null> {
   return selectOne<User>(`SELECT * FROM users WHERE id = ?1`, [localId]);
 }
 
-/** True when a usable Google connection exists (token row with a refresh token). */
+/**
+ * True when Google is usable right now: either a refresh token exists (long-term
+ * connection) OR the stored access token is still valid. This is only a gate for
+ * "is Google usable" — token refresh in getValidAccessToken still needs the
+ * refresh token and is unchanged.
+ */
 export async function isGoogleConnected(): Promise<boolean> {
   const localId = await getLocalUserId();
   const row = await selectOne<GoogleTokensRow>(
     `SELECT * FROM google_tokens WHERE user_id = ?1`,
     [localId]
   );
-  return !!row && !!row.refresh_token && row.refresh_token.trim() !== "";
+  if (!row) return false;
+  const hasRefresh = !!row.refresh_token && row.refresh_token.trim() !== "";
+  const accessValid =
+    !!row.access_token && new Date(row.expires_at).getTime() > Date.now();
+  return hasRefresh || accessValid;
 }
 
 /**
@@ -151,6 +167,10 @@ export async function getValidAccessToken(): Promise<string> {
     scopes: SCOPES,
   });
 
+  console.log("refresh expiresAt =", refreshed.expiresAt,
+            "| len:", String(refreshed.expiresAt).length,
+            "| computed:", expiresAtIso(refreshed.expiresAt));
+
   await execute(
     `UPDATE google_tokens
        SET access_token = ?1, refresh_token = ?2, expires_at = ?3, updated_at = datetime('now')
@@ -162,6 +182,9 @@ export async function getValidAccessToken(): Promise<string> {
       localId,
     ]
   );
+  
 
   return refreshed.accessToken;
 }
+
+

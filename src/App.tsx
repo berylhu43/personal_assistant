@@ -6,7 +6,7 @@ import * as auth from "./lib/auth";
 import { initApp } from "./lib/init";
 import { getApiKey } from "./lib/store";
 import { getTodayEvents, getPendingEmails } from "./lib/google";
-import { getBriefing, generateBriefing } from "./lib/briefing";
+import { getBriefing, getOrGenerateBriefing, generateBriefing } from "./lib/briefing";
 import type { User, CalendarEvent, PendingEmail, Briefing } from "./lib/types";
 
 import SignInScreen from "./components/SignInScreen";
@@ -37,16 +37,49 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [goalsRefresh, setGoalsRefresh] = useState(0);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
+  // Adjustable width of the left memo column when expanded (persisted).
+  const [leftWidth, setLeftWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem("pa.leftWidth"));
+    return saved >= 280 ? saved : 360;
+  });
 
   const userRef = useRef<User | null>(null);
   userRef.current = user;
 
+  // Drag the divider between the memo and chat panels.
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.min(Math.max(ev.clientX, 280), window.innerWidth - 300);
+      setLeftWidth(w);
+    };
+    const onUp = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      setLeftWidth((w) => {
+        localStorage.setItem("pa.leftWidth", String(w));
+        return w;
+      });
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, []);
+
   const loadDayData = useCallback(async (u: User) => {
     setLoadingBriefing(true);
+    // generateBriefing is internally resilient (it falls back if Google/model
+    // fail) and loadDayData only runs once signed in, so we always
+    // get-or-generate rather than gating on the strict isGoogleConnected().
     const [ev, em, br] = await Promise.all([
       getTodayEvents().catch(() => [] as CalendarEvent[]),
       getPendingEmails().catch(() => [] as PendingEmail[]),
-      getBriefing(u.id).catch(() => null),
+      getOrGenerateBriefing(u.id).catch((e) => {
+        // Keep briefing failures visible rather than silently swallowing them.
+        console.error("[briefing] load failed:", e);
+        return null;
+      }),
     ]);
     setEvents(ev);
     setEmails(em);
@@ -156,26 +189,31 @@ export default function App() {
       {/* Drag handle / header — Tauri uses the data attribute, not CSS app-region */}
       <header
         data-tauri-drag-region
-        className="flex items-center justify-between border-b border-ink/10 bg-cream px-3 py-2"
+        className="relative z-10 flex items-center justify-between border-b border-ink/10 bg-paper/60 px-3.5 py-2 backdrop-blur-sm"
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           {status === "ready" && (
             <button
               onClick={() => void toggleExpanded(!expanded)}
-              className="no-drag flex h-6 w-6 items-center justify-center rounded-md text-ink/60 hover:bg-ink/5 hover:text-ink"
+              className="no-drag flex h-7 w-7 items-center justify-center rounded-full border border-ink/10 bg-cream/70 text-base leading-none text-ink/55 transition hover:border-gold hover:text-ink"
               aria-label={expanded ? "Collapse" : "Expand"}
               title={expanded ? "Collapse" : "Expand chat"}
             >
               {expanded ? "‹" : "›"}
             </button>
           )}
-          <span className="font-serif text-sm text-ink">{dateStr}</span>
+          <div className="flex flex-col leading-tight">
+            <span className="eyebrow text-[8px]">Today</span>
+            <span className="font-serif text-[15px] leading-none text-ink">
+              {dateStr}
+            </span>
+          </div>
         </div>
         {status === "ready" && (
-          <div className="no-drag flex items-center gap-1">
+          <div className="no-drag flex items-center gap-1.5">
             <button
               onClick={() => setShowSettings(true)}
-              className="flex h-6 w-6 items-center justify-center rounded-md text-ink/50 hover:bg-ink/5 hover:text-ink"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-ink/45 transition hover:bg-ink/5 hover:text-ink"
               aria-label="Settings"
               title="Settings"
             >
@@ -183,19 +221,22 @@ export default function App() {
             </button>
             <button
               onClick={() => void handleSignOut()}
-              className="px-1 font-sans text-[11px] text-ink/40 hover:text-ink/70"
+              className="rounded-full px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink/40 transition hover:text-ink/75"
             >
               Sign out
             </button>
           </div>
         )}
+        {/* gold hairline accent */}
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-gold/45 to-transparent" />
       </header>
 
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
         {status === "loading" && (
-          <div className="flex flex-1 items-center justify-center">
-            <p className="font-serif text-xl text-ink/40">Loading…</p>
+          <div className="flex flex-1 flex-col items-center justify-center gap-2">
+            <span className="h-2 w-2 animate-ping rounded-full bg-gold" />
+            <p className="eyebrow animate-pulse">Opening your desk</p>
           </div>
         )}
 
@@ -207,51 +248,71 @@ export default function App() {
 
         {status === "ready" && user && (
           <>
-            {/* Memo column — todolist, always visible */}
+            {/* Memo column — always visible. Order: Briefing → Upcoming → Goals */}
             <section
-              className={`ruled-paper margin-line h-full overflow-y-auto slim-scroll px-4 py-4 pl-10 ${
-                expanded ? "w-[340px] shrink-0" : "w-full"
+              style={expanded ? { width: leftWidth } : undefined}
+              className={`ruled-paper margin-line h-full overflow-y-auto slim-scroll ${
+                expanded ? "shrink-0" : "w-full"
               }`}
             >
-              <p className="font-sans text-[10px] uppercase tracking-[0.2em] text-gold">
-                Goals
-              </p>
-              <div className="mt-2">
-                <GoalTracker userId={user.id} refreshKey={goalsRefresh} />
-              </div>
+              <BriefingPanel
+                briefing={briefing}
+                loading={loadingBriefing}
+                userId={user.id}
+                onTaskAdded={() => {
+                  setGoalsRefresh((n) => n + 1);
+                  setCalendarRefresh((n) => n + 1);
+                }}
+              />
 
-              <p className="mt-8 font-sans text-[10px] uppercase tracking-[0.2em] text-gold">
-                Upcoming
-              </p>
-              <div className="mt-2">
-                <LocalCalendar userId={user.id} refreshKey={calendarRefresh} />
+              <div className="px-4 py-5 pl-10">
+                <div
+                  className="rise mb-2.5 flex items-center gap-1.5"
+                  style={{ animationDelay: "60ms" }}
+                >
+                  <span className="h-1 w-1 rounded-full bg-gold" />
+                  <span className="eyebrow">Upcoming</span>
+                </div>
+                <div className="rise" style={{ animationDelay: "90ms" }}>
+                  <LocalCalendar userId={user.id} refreshKey={calendarRefresh} />
+                </div>
+
+                <div
+                  className="rise mb-2.5 mt-9 flex items-center gap-1.5"
+                  style={{ animationDelay: "120ms" }}
+                >
+                  <span className="h-1 w-1 rounded-full bg-gold" />
+                  <span className="eyebrow">Goals</span>
+                </div>
+                <div className="rise" style={{ animationDelay: "150ms" }}>
+                  <GoalTracker userId={user.id} refreshKey={goalsRefresh} />
+                </div>
               </div>
             </section>
 
+            {/* Draggable divider */}
+            {expanded && (
+              <div
+                onMouseDown={startResize}
+                className="no-drag group relative z-10 w-1 shrink-0 cursor-col-resize bg-ink/10 transition hover:bg-gold/50"
+                title="Drag to resize"
+              >
+                <span className="absolute inset-y-0 -left-1.5 -right-1.5" />
+              </div>
+            )}
+
             {/* Chat column — only when expanded */}
             {expanded && (
-              <section className="flex flex-1 flex-col overflow-hidden border-l border-ink/10">
-                <BriefingPanel
-                  briefing={briefing}
-                  events={events}
-                  loading={loadingBriefing}
+              <section className="flex flex-1 flex-col overflow-hidden">
+                <ChatPanel
                   userId={user.id}
-                  onTaskAdded={() => {
-                    setGoalsRefresh((n) => n + 1);
-                    setCalendarRefresh((n) => n + 1);
-                  }}
+                  events={events}
+                  emails={emails}
+                  onGoalCreated={() => setGoalsRefresh((n) => n + 1)}
+                  onCommitmentCreated={() => setCalendarRefresh((n) => n + 1)}
+                  onNeedApiKey={() => setShowSettings(true)}
+                  onClose={() => void handleCloseConversation()}
                 />
-                <div className="min-h-0 flex-1">
-                  <ChatPanel
-                    userId={user.id}
-                    events={events}
-                    emails={emails}
-                    onGoalCreated={() => setGoalsRefresh((n) => n + 1)}
-                    onCommitmentCreated={() => setCalendarRefresh((n) => n + 1)}
-                    onNeedApiKey={() => setShowSettings(true)}
-                    onClose={() => void handleCloseConversation()}
-                  />
-                </div>
               </section>
             )}
           </>

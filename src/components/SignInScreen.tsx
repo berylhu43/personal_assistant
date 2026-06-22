@@ -36,31 +36,49 @@ export default function SignInScreen({
   return (
     <div
       data-tauri-drag-region
-      className="ruled-paper margin-line flex h-full flex-col justify-center px-6 pl-12"
+      className="ruled-paper margin-line relative flex h-full flex-col justify-center overflow-hidden px-7 pl-12"
     >
-      <p className="font-sans text-[10px] uppercase tracking-[0.2em] text-gold">
-        {today}
-      </p>
-      <h1 className="mt-2 font-serif text-3xl leading-tight text-ink">
+      {/* faint oversized seal in the corner */}
+      <span className="pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full border border-gold/20" />
+      <span className="pointer-events-none absolute -right-2 top-3 font-serif text-[120px] leading-none text-gold/10 select-none">
+        ✦
+      </span>
+
+      <div className="rise" style={{ animationDelay: "40ms" }}>
+        <p className="eyebrow">{today}</p>
+      </div>
+      <h1
+        className="rise mt-3 font-serif text-[34px] leading-[1.05] text-ink"
+        style={{ animationDelay: "100ms" }}
+      >
         Your desk,
         <br />
-        thinking ahead.
+        <span className="text-gold-deep">thinking ahead.</span>
       </h1>
-      <p className="mt-3 font-sans text-xs leading-relaxed text-ink/65">
+      <p
+        className="rise mt-3.5 max-w-[16rem] font-sans text-[13px] leading-relaxed text-ink/65"
+        style={{ animationDelay: "160ms" }}
+      >
         An always-on memo that reads your calendar and inbox, tracks goals, and
         plans the week with you.
       </p>
       <button
         onClick={handle}
         disabled={busy}
-        className="no-drag mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-2.5 font-sans text-sm font-medium text-cream transition hover:opacity-90 disabled:opacity-50"
+        style={{ animationDelay: "220ms" }}
+        className="no-drag rise lift mt-7 inline-flex w-fit items-center justify-center gap-2 rounded-full bg-ink px-6 py-3 font-sans text-sm font-medium text-cream shadow-memo transition hover:shadow-lift disabled:opacity-50"
       >
+        <span
+          className={`h-1.5 w-1.5 rounded-full bg-gold ${busy ? "animate-ping" : ""}`}
+        />
         {busy ? "Connecting…" : "Continue with Google"}
       </button>
       {error && (
-        <p className="mt-3 font-sans text-xs text-red-700/80">{error}</p>
+        <p className="mt-3.5 max-w-[18rem] rounded-md bg-red-900/5 px-3 py-2 font-mono text-[11px] leading-snug text-red-800/80">
+          {error}
+        </p>
       )}
-      <p className="mt-3 font-sans text-[11px] text-ink/40">
+      <p className="mt-4 max-w-[16rem] font-sans text-[11px] leading-relaxed text-ink/40">
         Requests read access to Calendar &amp; Gmail, and permission to add
         events.
       </p>

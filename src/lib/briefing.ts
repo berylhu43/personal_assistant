@@ -1,5 +1,5 @@
 import { selectOne, execute, uid } from "./db";
-import { getTodayEvents, getPendingEmails } from "./google";
+import { getTodayEvents } from "./google";
 import { listTodayAndOverdue } from "./localCalendar";
 import { listGoals } from "./goals";
 import { listMemories } from "./memory";
@@ -8,7 +8,6 @@ import type {
   Briefing,
   BriefingRow,
   CalendarEvent,
-  PendingEmail,
   Commitment,
   Goal,
   Memory,
@@ -73,13 +72,6 @@ function formatEvents(events: CalendarEvent[]): string {
     .join("\n");
 }
 
-function formatEmails(emails: PendingEmail[]): string {
-  if (!emails.length) return "  (none)";
-  return emails
-    .map((e) => `  - [${e.tag}] ${e.from}: "${e.subject}" — ${e.snippet}`)
-    .join("\n");
-}
-
 function formatCommitments(commitments: Commitment[], today: string): string {
   if (!commitments.length) return "  (none)";
   return commitments
@@ -103,17 +95,21 @@ function formatMemoriesForBriefing(memories: Memory[]): string {
   return memories.slice(0, 20).map((m) => `  - ${m.content}`).join("\n");
 }
 
-const BRIEFING_SYSTEM = `You write a short morning briefing for a personal assistant memo widget.
-You are given today's Google Calendar events, the user's LOCAL commitments (today + overdue), open goals, long-term memory, and pending emails. Respond ONLY with JSON of the form:
-{ "summary": "2-3 warm, concise sentences about the day", "notes": ["proactive item", "..."] }
-The summary and notes should reflect local commitments and goals, not just the calendar. Notes should surface prep reminders for meetings, overdue/today commitments, goal nudges, dependencies (e.g. buy ingredients the day before baking), and timely email replies. Return 0-5 notes. No prose outside the JSON.`;
+const BRIEFING_SYSTEM = `You write a terse morning briefing for a personal assistant memo widget.
+You are given today's Google Calendar events, the user's LOCAL commitments (today + overdue), open goals, and long-term memory. Respond ONLY with JSON of the form:
+{ "summary": "...", "notes": ["...", "..."] }
+- summary: ONE or AT MOST TWO short sentences (hard cap). No preamble, no greeting filler — just what matters today.
+- notes: 0–5 short bullets (fragments, not sentences) surfacing prep reminders for meetings, overdue/today commitments, goal nudges, and dependencies (e.g. buy ingredients the day before baking).
+No prose outside the JSON.`;
 
 /** Fetch context, ask Claude, persist, and return today's briefing. */
 export async function generateBriefing(userId: string): Promise<Briefing> {
   const dateKey = todayStr();
-  const [events, emails, commitments, goals, memories] = await Promise.all([
+  // Sources: calendar, local commitments, open goals, and long-term memory.
+  // Email is intentionally excluded — email task extraction lives only in the
+  // inbox panel (scanInboxForTasks).
+  const [events, commitments, goals, memories] = await Promise.all([
     getTodayEvents().catch(() => [] as CalendarEvent[]),
-    getPendingEmails().catch(() => [] as PendingEmail[]),
     listTodayAndOverdue(userId, dateKey).catch(() => [] as Commitment[]),
     listGoals(userId).catch(() => [] as Goal[]),
     listMemories(userId).catch(() => [] as Memory[]),
@@ -139,10 +135,7 @@ Open goals:
 ${formatGoals(openGoals)}
 
 Long-term memory about the user:
-${formatMemoriesForBriefing(memories)}
-
-Pending emails (last 48h):
-${formatEmails(emails)}`;
+${formatMemoriesForBriefing(memories)}`;
 
   let summary = "Here's your day.";
   let notes: string[] = [];
@@ -154,9 +147,25 @@ ${formatEmails(emails)}`;
     notes = Array.isArray(parsed.notes) ? parsed.notes : [];
   } catch {
     // Fall back to a minimal briefing if the model/JSON fails.
-    summary = `${events.length} event(s) and ${emails.length} email(s) need your attention today.`;
+    summary = `${events.length} event(s) and ${commitments.length} commitment(s) today.`;
   }
 
   await upsertBriefing(userId, todayStr(), summary, notes);
+  // Prune older briefings AFTER today's row exists, so the section is never
+  // momentarily empty.
+  await execute(`DELETE FROM briefings WHERE user_id = ?1 AND date < ?2`, [
+    userId,
+    todayStr(),
+  ]);
   return { date: todayStr(), summary, notes };
+}
+
+/**
+ * Return today's briefing, generating it on demand if it doesn't exist yet.
+ * The UNIQUE(user_id, date) upsert keeps this safe against duplicates.
+ */
+export async function getOrGenerateBriefing(userId: string): Promise<Briefing> {
+  const existing = await getBriefing(userId);
+  if (existing) return existing;
+  return generateBriefing(userId);
 }

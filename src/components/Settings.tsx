@@ -26,35 +26,40 @@ export default function Settings({
   }
 
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-ink/30 px-6">
-      <div className="no-drag w-full max-w-sm rounded-xl border border-ink/10 bg-white p-5 shadow-xl">
-        <h3 className="font-serif text-xl text-ink">Settings</h3>
-        <p className="mt-1 font-sans text-xs text-ink/55">
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-ink/40 px-6 backdrop-blur-[2px]">
+      <div className="no-drag rise w-full max-w-sm rounded-2xl border border-ink/10 bg-paper p-6 shadow-lift">
+        <div className="mb-1 flex items-center gap-1.5">
+          <span className="h-1 w-1 rounded-full bg-gold" />
+          <span className="eyebrow">Settings</span>
+        </div>
+        <h3 className="font-serif text-2xl text-ink">Your keys</h3>
+        <p className="mt-1.5 font-sans text-xs leading-relaxed text-ink/55">
           Your Anthropic API key is stored locally and never leaves this machine.
         </p>
 
-        <label className="mt-4 block font-sans text-xs font-medium text-ink/70">
-          Anthropic API key {hasKey && <span className="text-done">· set</span>}
+        <label className="mt-5 block font-mono text-[10px] uppercase tracking-wide text-ink/55">
+          Anthropic API key{" "}
+          {hasKey && <span className="text-done">· set</span>}
         </label>
         <input
           type="password"
           value={key}
           onChange={(e) => setKey(e.target.value)}
           placeholder={hasKey ? "•••••••• (enter to replace)" : "sk-ant-…"}
-          className="selectable mt-1 w-full rounded-lg border border-ink/15 bg-cream/40 px-3 py-2 font-sans text-sm text-ink focus:border-gold focus:outline-none"
+          className="selectable focus-gold mt-1.5 w-full rounded-lg border border-ink/15 bg-cream/50 px-3 py-2.5 font-mono text-sm text-ink transition"
         />
 
-        <div className="mt-4 flex items-center justify-end gap-2">
+        <div className="mt-5 flex items-center justify-end gap-3">
           <button
             onClick={onClose}
-            className="font-sans text-sm text-ink/50 hover:text-ink"
+            className="font-sans text-sm text-ink/50 transition hover:text-ink"
           >
             Close
           </button>
           <button
             onClick={save}
             disabled={!key.trim()}
-            className="rounded-lg bg-ink px-4 py-2 font-sans text-sm font-medium text-cream transition hover:opacity-90 disabled:opacity-40"
+            className="rounded-full bg-ink px-5 py-2 font-sans text-sm font-medium text-cream shadow-memo transition hover:bg-gold-deep disabled:opacity-40 disabled:hover:bg-ink"
           >
             {saved ? "✓ Saved" : "Save"}
           </button>

@@ -5,9 +5,11 @@
 :root {
   --ink: #1c1c1e;
   --cream: #f5f0e8;
+  --paper: #fbf7ef;
   --gold: #d4a853;
+  --gold-deep: #b8902f;
   --done: #1d9e75;
-  --rule: rgba(28, 28, 30, 0.07);
+  --rule: rgba(60, 46, 20, 0.06);
 }
 
 html,
@@ -18,16 +20,30 @@ body,
 }
 
 body {
-  background-color: var(--cream);
+  /* Warm, lit-desk paper: soft highlight top-left fading to a gentle vignette. */
+  background:
+    radial-gradient(125% 90% at 12% -5%, #fdfaf3 0%, #f5f0e8 46%, #ece2d2 100%);
   color: var(--ink);
   font-family: "Inter", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  /* Frameless window: prevent text selection bleeding into drag. */
+  text-rendering: optimizeLegibility;
   user-select: none;
   overflow: hidden;
 }
 
-/* Header acts as the window drag handle for the frameless window. */
+/* Fine paper grain over everything (subtle, non-interactive). */
+#root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+}
+
+/* Window drag handle (frameless). */
 .drag {
   -webkit-app-region: drag;
   app-region: drag;
@@ -37,9 +53,14 @@ body {
   app-region: no-drag;
 }
 
-/* Ruled-paper texture for the memo panel. */
+/* Warm gold text selection. */
+::selection {
+  background: rgba(212, 168, 83, 0.32);
+  color: var(--ink);
+}
+
+/* Ruled-paper texture — translucent so the warm desk gradient shows through. */
 .ruled-paper {
-  background-color: var(--cream);
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
@@ -49,7 +70,7 @@ body {
   );
 }
 
-/* Vertical amber/gold margin line, like a notebook. */
+/* Vertical gold notebook margin line with a soft fade at the ends. */
 .margin-line {
   position: relative;
 }
@@ -60,14 +81,52 @@ body {
   bottom: 0;
   left: 2.25rem;
   width: 1.5px;
-  background: var(--gold);
-  opacity: 0.55;
+  background: linear-gradient(
+    to bottom,
+    transparent 0,
+    var(--gold) 8%,
+    var(--gold) 92%,
+    transparent 100%
+  );
+  opacity: 0.5;
 }
 
+/* ---- reusable bits ---- */
+
+/* Typewriter eyebrow label. */
+.eyebrow {
+  font-family: "Courier Prime", ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold-deep);
+}
+
+/* A card that lifts on hover. */
+.lift {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+.lift:hover {
+  transform: translateY(-1px);
+}
+
+/* Focus ring in gold. */
+.focus-gold:focus,
+.focus-gold:focus-visible {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(212, 168, 83, 0.18);
+}
+
+/* ---- animation ---- */
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
@@ -75,34 +134,47 @@ body {
   }
 }
 .rise {
-  animation: rise 0.4s ease both;
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Allow text selection inside the chat for copyability. */
 .selectable {
   user-select: text;
 }
 
-/* Slim scrollbar. */
+/* Slim warm scrollbar. */
 .slim-scroll::-webkit-scrollbar {
-  width: 7px;
+  width: 8px;
 }
 .slim-scroll::-webkit-scrollbar-thumb {
-  background: rgba(28, 28, 30, 0.15);
+  background: rgba(184, 144, 47, 0.28);
   border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.slim-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(184, 144, 47, 0.45);
+  background-clip: padding-box;
 }
 .slim-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
 /* Goal progress range slider thumb. */
+.goal-range {
+  outline: none;
+}
 .goal-range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  height: 12px;
-  width: 12px;
+  height: 13px;
+  width: 13px;
   border-radius: 99px;
   background: var(--ink);
   cursor: pointer;
-  border: 2px solid var(--cream);
+  border: 2.5px solid var(--paper);
+  box-shadow: 0 1px 3px rgba(44, 33, 16, 0.3);
+  transition: transform 0.15s ease;
+}
+.goal-range::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
 }

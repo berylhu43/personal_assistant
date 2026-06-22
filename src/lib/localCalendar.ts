@@ -26,6 +26,27 @@ export async function listUpcoming(userId: string): Promise<Commitment[]> {
   return rows.map(rowToCommitment);
 }
 
+function tomorrowStr(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+/**
+ * Open commitments dated through tomorrow only (overdue + today + tomorrow), so
+ * a multi-day plan doesn't flood the panel. Date-ascending.
+ */
+export async function listThroughTomorrow(userId: string): Promise<Commitment[]> {
+  const rows = await select<CommitmentRow>(
+    `SELECT * FROM calendar WHERE user_id = ?1 AND done = 0 AND date <= ?2
+     ORDER BY date ASC, COALESCE(time, '99:99') ASC LIMIT 50`,
+    [userId, tomorrowStr()]
+  );
+  return rows.map(rowToCommitment);
+}
+
 /** Open commitments due on or before `onDate` — used by the briefing. */
 export async function listTodayAndOverdue(
   userId: string,

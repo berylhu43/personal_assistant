@@ -2,14 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { scanInboxForTasks, type EmailTaskCandidate } from "../lib/emailTasks";
 import { createCommitment } from "../lib/localCalendar";
 import { saveGoal } from "../lib/goals";
-import type { Briefing, CalendarEvent } from "../lib/types";
-
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
+import type { Briefing } from "../lib/types";
 
 function todayKey(): string {
   const d = new Date();
@@ -20,33 +13,33 @@ function todayKey(): string {
 
 export default function BriefingPanel({
   briefing,
-  events,
   loading,
   userId,
   onTaskAdded,
 }: {
   briefing: Briefing | null;
-  events: CalendarEvent[];
   loading: boolean;
   userId: string;
   onTaskAdded: () => void;
 }) {
-  const today = events.filter((e) => e.day === "today");
-  const tomorrow = events.filter((e) => e.day === "tomorrow");
-
   // Inbox task candidates (null = not scanned yet).
   const [candidates, setCandidates] = useState<EmailTaskCandidate[] | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
 
+  // Collapsible sections.
+  const [briefingOpen, setBriefingOpen] = useState(true);
+  const [inboxOpen, setInboxOpen] = useState(true);
+
   const scan = useCallback(async () => {
     setScanning(true);
     setError(null);
     try {
       setCandidates(await scanInboxForTasks(userId));
-    } catch {
-      setError("Couldn't scan your inbox.");
+    } catch (e) {
+      console.error("inbox scan failed:", e);
+      setError(`Couldn't scan: ${e instanceof Error ? e.message : String(e)}`);
       setCandidates([]);
     } finally {
       setScanning(false);
@@ -81,75 +74,87 @@ export default function BriefingPanel({
   }
 
   return (
-    <div className="border-b border-ink/10 bg-cream/40 px-5 py-4">
-      <p className="font-sans text-[10px] uppercase tracking-[0.2em] text-gold">
-        Today's Briefing
-      </p>
+    <div className="relative border-b border-ink/10 bg-gradient-to-b from-paper/70 to-cream/30 px-5 py-5 pl-10">
+      <button
+        onClick={() => setBriefingOpen((o) => !o)}
+        className="mb-2 flex w-full items-center gap-1.5"
+      >
+        <span className="h-1 w-1 rounded-full bg-gold" />
+        <span className="eyebrow">Today's Briefing</span>
+        <span
+          className={`ml-auto text-ink/35 transition-transform ${
+            briefingOpen ? "rotate-90" : ""
+          }`}
+        >
+          ›
+        </span>
+      </button>
 
-      {briefing ? (
-        <>
-          <p className="mt-1.5 font-serif text-base leading-snug text-ink">
-            {briefing.summary}
-          </p>
-          {briefing.notes.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {briefing.notes.map((n, i) => (
-                <li key={i} className="flex gap-2 font-sans text-xs text-ink/70">
-                  <span className="text-gold">›</span>
-                  {n}
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
-      ) : (
-        <p className="mt-1.5 font-sans text-xs italic text-ink/40">
-          {loading
-            ? "Gathering your day…"
-            : "No briefing yet today — it appears each morning at 9."}
-        </p>
-      )}
-
-      {/* Schedule glance */}
-      <div className="mt-3">
-        <p className="mb-1 font-sans text-[10px] font-semibold uppercase tracking-wide text-ink/45">
-          Schedule
-        </p>
-        {today.length + tomorrow.length === 0 ? (
-          <Empty>Clear.</Empty>
+      {briefingOpen &&
+        (briefing ? (
+          <>
+            <p className="font-serif text-[17px] leading-snug text-ink">
+              {briefing.summary}
+            </p>
+            {briefing.notes.length > 0 && (
+              <ul className="mt-2.5 space-y-1.5">
+                {briefing.notes.map((n, i) => (
+                  <li
+                    key={i}
+                    className="flex gap-2 font-sans text-xs leading-relaxed text-ink/70"
+                  >
+                    <span className="mt-px select-none text-gold-deep">›</span>
+                    {n}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>
         ) : (
-          <ul className="space-y-1">
-            {[...today, ...tomorrow].slice(0, 5).map((e) => (
-              <li key={e.id} className="font-sans text-[11px] text-ink/75">
-                <span className="text-ink/40">
-                  {e.day === "tomorrow" ? "tmrw " : ""}
-                  {e.allDay ? "" : formatTime(e.start) + " "}
-                </span>
-                {e.title}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+          <p className="flex items-center gap-2 font-sans text-xs italic text-ink/45">
+            {loading && (
+              <span className="h-1.5 w-1.5 animate-ping rounded-full bg-gold" />
+            )}
+            {loading
+              ? "Gathering your day…"
+              : "No briefing yet — connect Google to see your day."}
+          </p>
+        ))}
 
       {/* Inbox — extracted tasks to confirm */}
-      <div className="mt-3">
-        <div className="mb-1 flex items-center justify-between">
-          <p className="font-sans text-[10px] font-semibold uppercase tracking-wide text-ink/45">
-            Inbox tasks
-          </p>
+      <div className="mt-5">
+        <div className="mb-2 flex items-center justify-between">
+          <button
+            onClick={() => setInboxOpen((o) => !o)}
+            className="flex items-center gap-1.5"
+          >
+            <span className="h-1 w-1 rounded-full bg-gold" />
+            <span className="eyebrow">Inbox</span>
+            <span
+              className={`text-ink/35 transition-transform ${
+                inboxOpen ? "rotate-90" : ""
+              }`}
+            >
+              ›
+            </span>
+            {candidates && candidates.length > 0 && (
+              <span className="rounded-full bg-gold/20 px-1.5 font-mono text-[9px] text-gold-deep">
+                {candidates.length}
+              </span>
+            )}
+          </button>
           <button
             onClick={() => void scan()}
             disabled={scanning}
-            className="font-sans text-[10px] text-ink/45 hover:text-ink disabled:opacity-40"
+            className="font-mono text-[10px] lowercase tracking-wide text-ink/40 transition hover:text-gold-deep disabled:opacity-40"
             title="Re-scan inbox"
           >
-            ⟳ refresh
+            {scanning ? "scanning…" : "⟳ refresh"}
           </button>
         </div>
 
-        {scanning ? (
-          <Empty>Scanning your inbox…</Empty>
+        {!inboxOpen ? null : scanning ? (
+          <Empty>Reading your inbox…</Empty>
         ) : error ? (
           <Empty>{error}</Empty>
         ) : candidates && candidates.length === 0 ? (
@@ -159,34 +164,39 @@ export default function BriefingPanel({
             {(candidates ?? []).map((c, i) => (
               <li
                 key={`${c.emailId}-${i}`}
-                className="rounded-lg border border-ink/10 bg-white/60 px-2.5 py-2"
+                className="lift group/task relative rounded-xl border border-ink/10 bg-paper/80 px-3 py-2.5 pr-7 shadow-memo hover:border-gold/50"
               >
-                <p className="font-sans text-xs font-medium text-ink">
+                <button
+                  onClick={() => dismiss(c)}
+                  aria-label="Close task"
+                  title="Close"
+                  className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full text-ink/30 transition hover:bg-ink/5 hover:text-ink"
+                >
+                  ✕
+                </button>
+                <p className="font-sans text-[13px] font-medium leading-snug text-ink">
                   {c.task.title}
                   {c.task.date && (
-                    <span className="font-normal text-ink/45"> · {c.task.date}</span>
+                    <span className="font-mono text-[10px] font-normal text-ink/45">
+                      {" "}
+                      · {c.task.date}
+                    </span>
                   )}
                   {c.task.kind === "goal" && (
-                    <span className="ml-1 rounded bg-gold/20 px-1 text-[8px] uppercase text-[#8a6a1f]">
+                    <span className="ml-1.5 rounded-full bg-gold/20 px-1.5 py-px font-mono text-[8px] uppercase tracking-wide text-gold-deep">
                       goal
                     </span>
                   )}
                 </p>
-                <p className="mt-0.5 truncate font-sans text-[10px] text-ink/45">
+                <p className="mt-0.5 truncate font-mono text-[10px] text-ink/40">
                   {c.from} — {c.subject}
                 </p>
-                <div className="mt-1.5 flex gap-2">
+                <div className="mt-2">
                   <button
                     onClick={() => void addCandidate(c)}
-                    className="rounded-md bg-ink px-2 py-0.5 font-sans text-[11px] font-medium text-cream hover:opacity-90"
+                    className="rounded-full bg-ink px-3 py-1 font-sans text-[11px] font-medium text-cream transition hover:bg-gold-deep"
                   >
                     ✓ Add
-                  </button>
-                  <button
-                    onClick={() => dismiss(c)}
-                    className="rounded-md border border-ink/15 px-2 py-0.5 font-sans text-[11px] text-ink/55 hover:text-ink"
-                  >
-                    ✕ Dismiss
                   </button>
                 </div>
               </li>

@@ -109,13 +109,16 @@ export default function ChatPanel({
   }
 
   return (
-    <div className="flex h-full flex-col bg-white">
-      <header className="no-drag flex items-center justify-between border-b border-ink/10 px-4 py-2">
-        <span className="font-serif text-sm text-ink">Conversation</span>
+    <div className="flex h-full flex-col bg-gradient-to-b from-white to-paper/40">
+      <header className="no-drag flex items-center justify-between border-b border-ink/10 px-4 py-2.5">
+        <div className="flex items-center gap-1.5">
+          <span className="h-1 w-1 rounded-full bg-gold" />
+          <span className="eyebrow">Conversation</span>
+        </div>
         <button
           onClick={() => void endAndSave()}
           disabled={closing}
-          className="rounded-full border border-ink/15 px-3 py-1 font-sans text-xs font-medium text-ink/70 transition hover:border-gold hover:text-ink disabled:opacity-50"
+          className="rounded-full border border-ink/15 px-3 py-1 font-sans text-xs font-medium text-ink/70 transition hover:border-gold hover:bg-gold/5 hover:text-ink disabled:opacity-50"
           title="Distill this conversation into goals, commitments & memory, then close it"
         >
           {closing ? "Saving…" : "End & save"}
@@ -124,23 +127,27 @@ export default function ChatPanel({
 
       <div
         ref={scrollRef}
-        className="slim-scroll selectable flex-1 space-y-3 overflow-y-auto px-5 py-4"
+        className="slim-scroll selectable flex-1 space-y-3 overflow-y-auto px-5 py-5"
       >
         {messages.length === 0 && !sending && (
-          <p className="mt-6 text-center font-sans text-sm italic text-ink/30">
-            Tell me a goal or plan — e.g. “I want to learn AI agents this month.”
-          </p>
+          <div className="mt-10 flex flex-col items-center gap-2 px-6 text-center">
+            <span className="font-serif text-2xl text-gold/40">“</span>
+            <p className="font-sans text-sm italic leading-relaxed text-ink/35">
+              Tell me a goal or plan — e.g. “I want to learn AI agents this
+              month.”
+            </p>
+          </div>
         )}
         {messages.map((m) =>
           m.role === "user" ? (
             <div key={m.id} className="flex justify-end">
-              <div className="max-w-[82%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-ink px-3.5 py-2 font-sans text-sm leading-relaxed text-cream">
+              <div className="max-w-[82%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-ink px-3.5 py-2 font-sans text-sm leading-relaxed text-cream shadow-memo">
                 {m.content}
               </div>
             </div>
           ) : (
             <div key={m.id} className="flex justify-start">
-              <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-ink/10 bg-white px-3.5 py-2 font-sans text-sm leading-relaxed text-ink shadow-sm">
+              <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-bl-md border border-ink/10 bg-paper/80 px-3.5 py-2 font-sans text-sm leading-relaxed text-ink shadow-memo">
                 {m.content}
               </div>
             </div>
@@ -148,11 +155,11 @@ export default function ChatPanel({
         )}
         {sending && (
           <div className="flex justify-start">
-            <div className="flex gap-1 rounded-2xl rounded-bl-sm border border-ink/10 bg-white px-3.5 py-2.5">
+            <div className="flex gap-1 rounded-2xl rounded-bl-md border border-ink/10 bg-paper/80 px-3.5 py-2.5 shadow-memo">
               {[0, 1, 2].map((i) => (
                 <span
                   key={i}
-                  className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink/40"
+                  className="h-1.5 w-1.5 animate-bounce rounded-full bg-gold/70"
                   style={{ animationDelay: `${i * 0.15}s` }}
                 />
               ))}
@@ -161,7 +168,7 @@ export default function ChatPanel({
         )}
       </div>
 
-      <div className="no-drag border-t border-ink/10 px-4 py-3">
+      <div className="no-drag border-t border-ink/10 bg-paper/50 px-4 py-3">
         <div className="flex items-end gap-2">
           <textarea
             value={input}
@@ -174,12 +181,12 @@ export default function ChatPanel({
             }}
             rows={1}
             placeholder="Message…"
-            className="selectable max-h-28 flex-1 resize-none rounded-xl border border-ink/15 bg-cream/40 px-3 py-2 font-sans text-sm text-ink placeholder:text-ink/35 focus:border-gold focus:outline-none"
+            className="selectable focus-gold max-h-28 flex-1 resize-none rounded-xl border border-ink/15 bg-cream/50 px-3.5 py-2.5 font-sans text-sm text-ink transition placeholder:text-ink/35"
           />
           <button
             onClick={() => void send()}
             disabled={sending || !input.trim()}
-            className="rounded-xl bg-ink px-3.5 py-2 font-sans text-sm font-medium text-cream transition hover:opacity-90 disabled:opacity-40"
+            className="rounded-xl bg-ink px-4 py-2.5 font-sans text-sm font-medium text-cream shadow-memo transition hover:bg-gold-deep disabled:opacity-40 disabled:hover:bg-ink"
           >
             Send
           </button>

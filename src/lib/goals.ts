@@ -92,6 +92,23 @@ export async function saveGoal(input: {
   return createGoal(input);
 }
 
+/**
+ * Persist a goal's plan and derive its progress from completed plan items
+ * (so checking off a sub-task moves the bar). Marks the goal done at 100%.
+ */
+export async function setGoalPlan(
+  id: string,
+  plan: WeeklyPlanItem[]
+): Promise<void> {
+  const total = plan.length;
+  const completed = plan.filter((p) => p.done).length;
+  const progress = total ? Math.round((completed / total) * 100) : 0;
+  await execute(
+    `UPDATE goals SET plan = ?1, progress = ?2, done = ?3 WHERE id = ?4`,
+    [JSON.stringify(plan), progress, progress >= 100 ? 1 : 0, id]
+  );
+}
+
 export async function setGoalProgress(id: string, progress: number): Promise<void> {
   const clamped = Math.max(0, Math.min(100, Math.round(progress)));
   await execute(`UPDATE goals SET progress = ?1, done = ?2 WHERE id = ?3`, [

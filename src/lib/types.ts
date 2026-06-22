@@ -78,6 +78,7 @@ export interface Goal {
 export interface WeeklyPlanItem {
   week: number;
   focus: string;
+  done?: boolean;
 }
 
 export type MemoryKind = "fact" | "preference" | "goal_note";

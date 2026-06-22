@@ -2,7 +2,13 @@ import { getRecentEmailsWithBody } from "./google";
 import { chat } from "./anthropic";
 import { listUpcoming } from "./localCalendar";
 import { listGoals } from "./goals";
-import { todayStr } from "./briefing";
+
+/** Local date as YYYY-MM-DD (kept local so briefing.ts can import this module). */
+function todayStr(): string {
+  const d = new Date();
+  const tz = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+}
 
 // A task candidate surfaced from an external source (email for now). The same
 // "fetch → extract candidates → confirm" shape can later back Teams / WhatsApp:
