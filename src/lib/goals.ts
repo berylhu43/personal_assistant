@@ -1,6 +1,19 @@
 import { select, execute, uid } from "./db";
 import type { Goal, GoalRow, WeeklyPlanItem } from "./types";
 
+/**
+ * Normalize a title for dedup: lowercase, drop straight & curly quotes,
+ * collapse whitespace, and strip surrounding punctuation.
+ */
+export function normTitle(t: string): string {
+  return t
+    .toLowerCase()
+    .replace(/[“”‘’„‟'"`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+}
+
 function rowToGoal(r: GoalRow): Goal {
   let plan: WeeklyPlanItem[] | null = null;
   if (r.plan) {
@@ -47,6 +60,36 @@ export async function createGoal(input: {
     ]
   );
   return id;
+}
+
+/**
+ * Idempotent goal upsert keyed on the NORMALIZED title. If an existing goal
+ * matches, merge in the new plan/target_date (preferring incoming non-null
+ * values) instead of inserting a duplicate. Otherwise insert.
+ */
+export async function saveGoal(input: {
+  userId: string;
+  title: string;
+  plan?: WeeklyPlanItem[] | null;
+  targetDate?: string | null;
+}): Promise<string> {
+  const norm = normTitle(input.title);
+  const existing = (await listGoals(input.userId)).find(
+    (g) => normTitle(g.title) === norm
+  );
+
+  if (existing) {
+    const plan = input.plan ?? existing.plan;
+    const targetDate = input.targetDate ?? existing.targetDate;
+    await execute(`UPDATE goals SET plan = ?1, target_date = ?2 WHERE id = ?3`, [
+      plan ? JSON.stringify(plan) : null,
+      targetDate ?? null,
+      existing.id,
+    ]);
+    return existing.id;
+  }
+
+  return createGoal(input);
 }
 
 export async function setGoalProgress(id: string, progress: number): Promise<void> {

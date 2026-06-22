@@ -138,6 +138,115 @@ export async function getPendingEmails(): Promise<PendingEmail[]> {
     });
 }
 
+// ---- email bodies (for task extraction) ----
+
+export interface EmailWithBody {
+  id: string;
+  from: string;
+  subject: string;
+  date: string;
+  body: string;
+}
+
+/** Decode a Gmail base64url body part to a UTF-8 string. */
+function decodeB64Url(data: string): string {
+  try {
+    const b64 = data.replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
+/** Depth-first search of the MIME tree for the first part of a given type. */
+function findPart(payload: any, mime: string): any {
+  if (!payload) return null;
+  if (payload.mimeType === mime && payload.body?.data) return payload;
+  for (const p of payload.parts ?? []) {
+    const found = findPart(p, mime);
+    if (found) return found;
+  }
+  return null;
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+/** Drop quoted reply chains and signatures (best-effort) and tidy whitespace. */
+function cleanBody(text: string): string {
+  let t = text.replace(/\r\n/g, "\n");
+  const cuts = [
+    /\n>.*$/s, // first quoted line onward
+    /\nOn .*wrote:[\s\S]*$/, // "On <date> <person> wrote:"
+    /\n-----Original Message-----[\s\S]*$/i,
+    /\n_{5,}[\s\S]*$/,
+    /\n-- \n[\s\S]*$/, // signature delimiter
+  ];
+  for (const re of cuts) t = t.replace(re, "");
+  return t.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * Unread inbox emails from the last 24h (max 10), with their plain-text body
+ * extracted, cleaned, and truncated to ~1500 chars. Separate from
+ * getPendingEmails (which the briefing still uses).
+ */
+export async function getRecentEmailsWithBody(): Promise<EmailWithBody[]> {
+  const headers = await authHeaders();
+
+  const listParams = new URLSearchParams({
+    q: "is:unread in:inbox newer_than:1d",
+    maxResults: "10",
+  });
+  const listRes = await fetch(`${GMAIL_BASE}/users/me/messages?${listParams}`, {
+    method: "GET",
+    headers,
+  });
+  if (!listRes.ok) throw new Error(`Gmail API error ${listRes.status}`);
+  const list = await listRes.json();
+  const ids: string[] = (list.messages ?? []).map((m: any) => m.id);
+
+  const details = await Promise.all(
+    ids.map(async (id) => {
+      const r = await fetch(
+        `${GMAIL_BASE}/users/me/messages/${id}?format=full`,
+        { method: "GET", headers }
+      );
+      return r.ok ? r.json() : null;
+    })
+  );
+
+  return details.filter(Boolean).map((msg: any): EmailWithBody => {
+    const hs = msg.payload?.headers ?? [];
+    const plain = findPart(msg.payload, "text/plain");
+    let body = plain ? decodeB64Url(plain.body.data) : "";
+    if (!body) {
+      const html = findPart(msg.payload, "text/html");
+      if (html) body = stripHtml(decodeB64Url(html.body.data));
+    }
+    if (!body) body = msg.snippet ?? "";
+    body = cleanBody(body).slice(0, 1500);
+
+    const dateHeader = header(hs, "Date");
+    return {
+      id: msg.id,
+      from: header(hs, "From"),
+      subject: header(hs, "Subject") || "(no subject)",
+      date: dateHeader ? new Date(dateHeader).toISOString() : "",
+      body,
+    };
+  });
+}
+
 /** Create an event on the primary calendar. */
 export async function createEvent(ev: NewEvent): Promise<{ htmlLink?: string }> {
   const headers = {

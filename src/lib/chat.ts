@@ -1,8 +1,13 @@
 import { select, execute, uid } from "./db";
 import { chat } from "./anthropic";
 import { createEvent } from "./google";
-import { createGoal } from "./goals";
-import { createCommitment } from "./localCalendar";
+import { saveGoal, listGoals, setGoalDone, deleteGoal } from "./goals";
+import {
+  createCommitment,
+  listUpcoming,
+  setCommitmentDone,
+  deleteCommitment,
+} from "./localCalendar";
 import { addMemory } from "./memory";
 import { listMemories } from "./memory";
 import type {
@@ -11,6 +16,8 @@ import type {
   CalendarEvent,
   PendingEmail,
   Memory,
+  Goal,
+  Commitment,
   NewEvent,
   WeeklyPlanItem,
   MemoryKind,
@@ -98,10 +105,34 @@ function formatMemories(memories: Memory[]): string {
     .join("\n");
 }
 
+function formatGoals(goals: Goal[]): string {
+  if (!goals.length) return "  (no goals)";
+  return goals
+    .map(
+      (g) =>
+        `  - [id: ${g.id}] ${g.title} — ${g.progress}%${
+          g.targetDate ? ` (by ${g.targetDate})` : ""
+        }`
+    )
+    .join("\n");
+}
+
+function formatCommitments(commitments: Commitment[]): string {
+  if (!commitments.length) return "  (no commitments)";
+  return commitments
+    .map(
+      (c) =>
+        `  - [id: ${c.id}] ${c.date}${c.time ? ` ${c.time}` : ""} — ${c.title}`
+    )
+    .join("\n");
+}
+
 export function buildSystemPrompt(
   events: CalendarEvent[],
   emails: PendingEmail[],
-  memories: Memory[]
+  memories: Memory[],
+  goals: Goal[],
+  commitments: Commitment[]
 ): string {
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
@@ -123,10 +154,17 @@ ${formatEmails(emails)}
 What you remember about the user:
 ${formatMemories(memories)}
 
+Your current goals:
+${formatGoals(goals)}
+
+Your calendar (local commitments):
+${formatCommitments(commitments)}
+
 Behaviors:
 - Help plan goals. When the user states a goal, break it into a concrete weekly plan and propose calendar time blocks.
 - Detect dependencies and give reminders (e.g. "baking a cake Sunday" → "buy ingredients Saturday").
 - Be proactive about prep for meetings happening tomorrow.
+- You can SEE the user's goals and commitments above (each line shows its id). You may modify them — complete or delete — but ONLY when the user explicitly asks (e.g. "mark the reading goal done", "cancel my dentist commitment"). Use the exact id from the lists above.
 - Keep replies concise, warm, and practical.
 
 You can take actions by emitting fenced JSON blocks anywhere in your reply. The app parses and executes them, then hides them from the user.
@@ -158,6 +196,28 @@ Use an ABSOLUTE date (resolve "tomorrow"/"Friday" against today's date above). "
 \`\`\`
 Never auto-create Google Calendar events from general statements; default to \`commitment\` instead.
 
+5. Mark a goal complete (use the id from "Your current goals"):
+\`\`\`complete-goal
+{ "id": "..." }
+\`\`\`
+
+6. Delete a goal:
+\`\`\`delete-goal
+{ "id": "..." }
+\`\`\`
+
+7. Mark a commitment done (use the id from "Your calendar"):
+\`\`\`complete-commitment
+{ "id": "..." }
+\`\`\`
+
+8. Delete a commitment:
+\`\`\`delete-commitment
+{ "id": "..." }
+\`\`\`
+
+To MODIFY a commitment (e.g. move it to tomorrow, change the details), there is no update block: emit a \`delete-commitment\` for the old id AND a new \`commitment\` block with the updated date/time/title.
+
 Always also write a normal, friendly message for the user alongside any blocks.`;
 }
 
@@ -175,15 +235,24 @@ interface ParsedActions {
   goals: { title: string; plan?: WeeklyPlanItem[] }[];
   memories: { kind: MemoryKind; content: string }[];
   commitments: ParsedCommitment[];
+  completeGoals: string[];
+  deleteGoals: string[];
+  completeCommitments: string[];
+  deleteCommitments: string[];
 }
 
-const BLOCK_RE = /```(add-event|goal|remember|commitment)\s*([\s\S]*?)```/g;
+const BLOCK_RE =
+  /```(add-event|goal|remember|commitment|complete-goal|delete-goal|complete-commitment|delete-commitment)\s*([\s\S]*?)```/g;
 
 export function parseBlocks(raw: string): ParsedActions {
   const events: NewEvent[] = [];
   const goals: { title: string; plan?: WeeklyPlanItem[] }[] = [];
   const memories: { kind: MemoryKind; content: string }[] = [];
   const commitments: ParsedCommitment[] = [];
+  const completeGoals: string[] = [];
+  const deleteGoals: string[] = [];
+  const completeCommitments: string[] = [];
+  const deleteCommitments: string[] = [];
 
   let match: RegExpExecArray | null;
   while ((match = BLOCK_RE.exec(raw)) !== null) {
@@ -197,13 +266,29 @@ export function parseBlocks(raw: string): ParsedActions {
         memories.push({ kind: json.kind ?? "fact", content: json.content });
       else if (kind === "commitment" && json.title && json.date)
         commitments.push({ title: json.title, date: json.date, time: json.time });
+      else if (kind === "complete-goal" && json.id) completeGoals.push(json.id);
+      else if (kind === "delete-goal" && json.id) deleteGoals.push(json.id);
+      else if (kind === "complete-commitment" && json.id)
+        completeCommitments.push(json.id);
+      else if (kind === "delete-commitment" && json.id)
+        deleteCommitments.push(json.id);
     } catch {
       /* skip malformed block */
     }
   }
 
   const clean = raw.replace(BLOCK_RE, "").replace(/\n{3,}/g, "\n\n").trim();
-  return { clean, events, goals, memories, commitments };
+  return {
+    clean,
+    events,
+    goals,
+    memories,
+    commitments,
+    completeGoals,
+    deleteGoals,
+    completeCommitments,
+    deleteCommitments,
+  };
 }
 
 // ---- one chat turn ----
@@ -216,37 +301,18 @@ export interface ChatTurnResult {
 }
 
 /**
- * Persist the user's message, build the memory-aware prompt, call Claude,
- * act on any fenced blocks, persist the assistant reply, and return the
- * cleaned visible text plus flags for what changed.
+ * Execute the explicit, in-the-moment actions parsed from the assistant reply.
+ * Returns flags so the UI knows which panels to refresh.
  */
-export async function runChatTurn(
+async function applyActions(
   userId: string,
-  userText: string,
-  ctx: { events: CalendarEvent[]; emails: PendingEmail[] }
-): Promise<ChatTurnResult> {
-  await addMessage(userId, "user", userText);
-
-  const [memories, history] = await Promise.all([
-    listMemories(userId),
-    recentMessages(userId, 20),
-  ]);
-
-  const system = buildSystemPrompt(ctx.events, ctx.emails, memories);
-  const raw = await chat(history, system);
-  const {
-    clean,
-    events,
-    goals,
-    memories: newMemories,
-    commitments,
-  } = parseBlocks(raw);
-
+  p: ParsedActions
+): Promise<{ createdGoal: boolean; createdEvent: boolean; createdCommitment: boolean }> {
   let createdEvent = false;
   let createdGoal = false;
   let createdCommitment = false;
 
-  for (const ev of events) {
+  for (const ev of p.events) {
     try {
       await createEvent(ev);
       createdEvent = true;
@@ -254,14 +320,14 @@ export async function runChatTurn(
       /* surface failures softly; reply text still shown */
     }
   }
-  for (const g of goals) {
-    await createGoal({ userId, title: g.title, plan: g.plan ?? null });
+  for (const g of p.goals) {
+    await saveGoal({ userId, title: g.title, plan: g.plan ?? null });
     createdGoal = true;
   }
-  for (const m of newMemories) {
+  for (const m of p.memories) {
     await addMemory({ userId, kind: m.kind, content: m.content });
   }
-  for (const c of commitments) {
+  for (const c of p.commitments) {
     await createCommitment({
       userId,
       title: c.title,
@@ -271,8 +337,61 @@ export async function runChatTurn(
     });
     createdCommitment = true;
   }
+  for (const id of p.completeGoals) {
+    await setGoalDone(id, true);
+    createdGoal = true;
+  }
+  for (const id of p.deleteGoals) {
+    await deleteGoal(id);
+    createdGoal = true;
+  }
+  for (const id of p.completeCommitments) {
+    await setCommitmentDone(id, true);
+    createdCommitment = true;
+  }
+  for (const id of p.deleteCommitments) {
+    await deleteCommitment(id);
+    createdCommitment = true;
+  }
 
-  const visible = clean || "Done.";
+  return { createdGoal, createdEvent, createdCommitment };
+}
+
+/**
+ * Persist the user's message, build the context-aware prompt (memory, goals,
+ * commitments), call Claude, act on any fenced blocks, persist the assistant
+ * reply, and return the cleaned visible text plus flags for what changed.
+ */
+export async function runChatTurn(
+  userId: string,
+  userText: string,
+  ctx: { events: CalendarEvent[]; emails: PendingEmail[] }
+): Promise<ChatTurnResult> {
+  await addMessage(userId, "user", userText);
+
+  const [memories, goals, commitments, history] = await Promise.all([
+    listMemories(userId),
+    listGoals(userId).then((gs) => gs.filter((g) => !g.done)),
+    listUpcoming(userId),
+    recentMessages(userId, 20),
+  ]);
+
+  const system = buildSystemPrompt(
+    ctx.events,
+    ctx.emails,
+    memories,
+    goals,
+    commitments
+  );
+  const raw = await chat(history, system);
+  const parsed = parseBlocks(raw);
+
+  const { createdGoal, createdEvent, createdCommitment } = await applyActions(
+    userId,
+    parsed
+  );
+
+  const visible = parsed.clean || "Done.";
   await addMessage(userId, "assistant", visible);
 
   return { reply: visible, createdGoal, createdEvent, createdCommitment };

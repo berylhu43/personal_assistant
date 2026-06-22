@@ -234,8 +234,12 @@ export default function App() {
                 <BriefingPanel
                   briefing={briefing}
                   events={events}
-                  emails={emails}
                   loading={loadingBriefing}
+                  userId={user.id}
+                  onTaskAdded={() => {
+                    setGoalsRefresh((n) => n + 1);
+                    setCalendarRefresh((n) => n + 1);
+                  }}
                 />
                 <div className="min-h-0 flex-1">
                   <ChatPanel

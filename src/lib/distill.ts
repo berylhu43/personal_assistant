@@ -1,7 +1,7 @@
-import { select, selectOne } from "./db";
+import { select } from "./db";
 import { chat } from "./anthropic";
 import { addMemory, listMemories } from "./memory";
-import { createGoal, listGoals } from "./goals";
+import { saveGoal, listGoals } from "./goals";
 import { createCommitment, listUpcoming } from "./localCalendar";
 import { todayStr } from "./briefing";
 import type { MessageRow, MemoryKind } from "./types";
@@ -37,14 +37,6 @@ Reconciliation — IMPORTANT:
 function tryParse(raw: string): any {
   const match = raw.match(/\{[\s\S]*\}/);
   return JSON.parse(match ? match[0] : raw);
-}
-
-async function goalExists(userId: string, title: string): Promise<boolean> {
-  const row = await selectOne<{ id: string }>(
-    `SELECT id FROM goals WHERE user_id = ?1 AND lower(trim(title)) = lower(trim(?2)) LIMIT 1`,
-    [userId, title]
-  );
-  return !!row;
 }
 
 /**
@@ -110,14 +102,15 @@ Distill ONLY genuinely new items into the JSON structure now.`;
     }
   }
 
-  // goals — dedupe on title (backstop); persist an absolute target date if given.
+  // goals — saveGoal upserts by normalized title (backstop); persist an
+  // absolute target date if given.
   for (const g of parsed.goals ?? []) {
-    if (g?.title && !(await goalExists(userId, String(g.title)))) {
+    if (g?.title) {
       const targetDate =
         typeof g.targetDate === "string" && DATE_RE.test(g.targetDate)
           ? g.targetDate
           : null;
-      await createGoal({ userId, title: String(g.title), targetDate });
+      await saveGoal({ userId, title: String(g.title), targetDate });
     }
   }
 
