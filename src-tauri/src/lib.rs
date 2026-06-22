@@ -165,6 +165,16 @@ CREATE TABLE IF NOT EXISTS calendar (
 );
 "#,
         },
+        Migration {
+            version: 3,
+            description: "goal target date",
+            kind: MigrationKind::Up,
+            // SQLite has no ADD COLUMN IF NOT EXISTS; the migration framework's
+            // versioning guarantees this runs exactly once.
+            sql: r#"
+ALTER TABLE goals ADD COLUMN target_date TEXT;
+"#,
+        },
     ]
 }
 

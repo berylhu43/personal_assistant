@@ -16,6 +16,7 @@ function rowToGoal(r: GoalRow): Goal {
     progress: r.progress,
     done: r.done === 1,
     plan,
+    targetDate: r.target_date,
     createdAt: r.created_at,
   };
 }
@@ -32,11 +33,18 @@ export async function createGoal(input: {
   userId: string;
   title: string;
   plan?: WeeklyPlanItem[] | null;
+  targetDate?: string | null;
 }): Promise<string> {
   const id = uid();
   await execute(
-    `INSERT INTO goals (id, user_id, title, plan) VALUES (?1, ?2, ?3, ?4)`,
-    [id, input.userId, input.title, input.plan ? JSON.stringify(input.plan) : null]
+    `INSERT INTO goals (id, user_id, title, plan, target_date) VALUES (?1, ?2, ?3, ?4, ?5)`,
+    [
+      id,
+      input.userId,
+      input.title,
+      input.plan ? JSON.stringify(input.plan) : null,
+      input.targetDate ?? null,
+    ]
   );
   return id;
 }

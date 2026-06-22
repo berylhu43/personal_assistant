@@ -8,6 +8,13 @@ import {
 } from "../lib/goals";
 import type { Goal } from "../lib/types";
 
+/** "2026-07-01" → "Jul 1". */
+function formatTarget(date: string): string {
+  const d = new Date(`${date}T00:00:00`);
+  if (isNaN(d.getTime())) return date;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 export default function GoalTracker({
   userId,
   refreshKey,
@@ -97,6 +104,11 @@ export default function GoalTracker({
                 >
                   {goal.plan.length}-wk plan
                 </button>
+              )}
+              {goal.targetDate && (
+                <span className="font-sans text-[10px] text-ink/40">
+                  by {formatTarget(goal.targetDate)}
+                </span>
               )}
               <span className="font-sans text-xs tabular-nums text-ink/40">
                 {goal.progress}%

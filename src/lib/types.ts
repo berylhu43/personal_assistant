@@ -22,6 +22,7 @@ export interface GoalRow {
   progress: number;
   done: number; // 0 | 1
   plan: string | null; // JSON
+  target_date: string | null; // optional YYYY-MM-DD
   created_at: string;
 }
 
@@ -70,6 +71,7 @@ export interface Goal {
   progress: number;
   done: boolean;
   plan: WeeklyPlanItem[] | null;
+  targetDate: string | null; // optional YYYY-MM-DD
   createdAt: string;
 }
 

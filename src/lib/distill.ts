@@ -1,8 +1,8 @@
 import { select, selectOne } from "./db";
 import { chat } from "./anthropic";
-import { addMemory } from "./memory";
-import { createGoal } from "./goals";
-import { createCommitment } from "./localCalendar";
+import { addMemory, listMemories } from "./memory";
+import { createGoal, listGoals } from "./goals";
+import { createCommitment, listUpcoming } from "./localCalendar";
 import { todayStr } from "./briefing";
 import type { MessageRow, MemoryKind } from "./types";
 
@@ -27,7 +27,12 @@ Boundary rules:
 - goals: objectives or projects the user expressed (an aim to accomplish). "targetDate" is optional.
 - commitments: discrete dated things the user committed to (e.g. "dentist Friday", "submit report Monday"). "time" is optional.
 - Resolve ALL relative time ("tomorrow", "this Friday", "next week") to ABSOLUTE calendar dates using the provided today's date. Never store a relative word.
-- Omit anything uncertain or already obvious. Empty arrays are fine.`;
+- Omit anything uncertain or already obvious. Empty arrays are fine.
+
+Reconciliation — IMPORTANT:
+- You will be given the items ALREADY SAVED for this user (goals, commitments, memories). Output ONLY genuinely new items that are not already represented — even if you would phrase them differently.
+- If something in the transcript is already captured by an existing goal/commitment/memory (the same underlying thing, regardless of wording or exact date), OMIT it.
+- When unsure whether two refer to the same thing, treat them as the same and OMIT.`;
 
 function tryParse(raw: string): any {
   const match = raw.match(/\{[\s\S]*\}/);
@@ -54,14 +59,34 @@ export async function distillConversation(userId: string): Promise<void> {
   );
   if (rows.length === 0) return;
 
+  // Load current state so the model reconciles against what already exists
+  // (including items created live during this very conversation).
+  const [openGoals, commitments, memories] = await Promise.all([
+    listGoals(userId)
+      .then((gs) => gs.filter((g) => !g.done))
+      .catch(() => []),
+    listUpcoming(userId).catch(() => []),
+    listMemories(userId).catch(() => []),
+  ]);
+
+  const alreadySaved = `ALREADY SAVED (do NOT re-create anything represented here):
+Goals:
+${openGoals.length ? openGoals.map((g) => `  - ${g.title}${g.targetDate ? ` (by ${g.targetDate})` : ""}`).join("\n") : "  (none)"}
+Commitments:
+${commitments.length ? commitments.map((c) => `  - ${c.date}${c.time ? ` ${c.time}` : ""} — ${c.title}`).join("\n") : "  (none)"}
+Memories:
+${memories.length ? memories.map((m) => `  - ${m.content}`).join("\n") : "  (none)"}`;
+
   const transcript = rows.map((r) => `${r.role}: ${r.content}`).join("\n");
   const today = todayStr();
   const userMsg = `Today's date is ${today}.
 
+${alreadySaved}
+
 Conversation transcript:
 ${transcript}
 
-Distill it into the JSON structure now.`;
+Distill ONLY genuinely new items into the JSON structure now.`;
 
   const raw = await chat([{ role: "user", content: userMsg }], DISTILL_SYSTEM, 1024);
 
@@ -85,10 +110,14 @@ Distill it into the JSON structure now.`;
     }
   }
 
-  // goals — dedupe on title.
+  // goals — dedupe on title (backstop); persist an absolute target date if given.
   for (const g of parsed.goals ?? []) {
     if (g?.title && !(await goalExists(userId, String(g.title)))) {
-      await createGoal({ userId, title: String(g.title) });
+      const targetDate =
+        typeof g.targetDate === "string" && DATE_RE.test(g.targetDate)
+          ? g.targetDate
+          : null;
+      await createGoal({ userId, title: String(g.title), targetDate });
     }
   }
 
