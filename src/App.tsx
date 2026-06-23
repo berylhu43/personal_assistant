@@ -276,7 +276,7 @@ export default function App() {
           {status === "ready" && (
             <button
               onClick={() => void toggleExpanded(!expanded)}
-              className="no-drag shrink-0 rounded-full border border-ink/10 bg-cream/70 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-ink/55 transition hover:border-gold hover:text-ink"
+              className="no-drag shrink-0 font-sans text-xs text-ink/45 transition hover:text-ink"
               aria-label={expanded ? "Collapse" : "Expand"}
             >
               {expanded ? "Collapse" : "Expand"}
@@ -346,16 +346,19 @@ export default function App() {
                 expanded ? "shrink-0" : "w-full"
               }`}
             >
-              <BriefingPanel
-                briefing={briefing}
-                loading={loadingBriefing}
-                expanded={expanded}
-                userId={user.id}
-                onTaskAdded={() => {
-                  setGoalsRefresh((n) => n + 1);
-                  setCalendarRefresh((n) => n + 1);
-                }}
-              />
+              {/* Briefing + Inbox — expanded only. Collapsed = tasks only. */}
+              {expanded && (
+                <BriefingPanel
+                  briefing={briefing}
+                  loading={loadingBriefing}
+                  expanded={expanded}
+                  userId={user.id}
+                  onTaskAdded={() => {
+                    setGoalsRefresh((n) => n + 1);
+                    setCalendarRefresh((n) => n + 1);
+                  }}
+                />
+              )}
 
               <div className="px-4 py-5 pl-10">
                 <div
