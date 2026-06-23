@@ -28,6 +28,45 @@ async function setWindowExpanded(expanded: boolean) {
   }
 }
 
+function GearIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  );
+}
+
+function LogoutIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  );
+}
+
 export default function App() {
   const [status, setStatus] = useState<Status>("loading");
   const [user, setUser] = useState<User | null>(null);
@@ -194,11 +233,13 @@ export default function App() {
   // expanded/collapsed state.
   const runPlan = useCallback(async (pending: PendingPlan) => {
     const u = userRef.current;
+    console.log("[plan-debug] App.runPlan entry, user?", !!u, pending);
     if (!u) return;
     setPlanResult(null);
     setPlanning(true);
     try {
       const result = await generatePlan(u.id, pending);
+      console.log("[plan-debug] App.runPlan done, ok =", result.ok);
       await addMessage(u.id, "assistant", result.reply);
       setPlanResult({ reply: result.reply, goalId: result.ok ? result.goalId ?? null : null });
       if (result.ok) {
@@ -229,47 +270,54 @@ export default function App() {
       {/* Drag handle / header — Tauri uses the data attribute, not CSS app-region */}
       <header
         data-tauri-drag-region
-        className="relative z-10 flex items-center justify-between border-b border-ink/10 bg-paper/60 px-3.5 py-2 backdrop-blur-sm"
+        className="relative z-10 flex items-center justify-between gap-2 border-b border-ink/10 bg-paper/60 px-3 py-2 backdrop-blur-sm"
       >
-        <div className="flex items-center gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5">
           {status === "ready" && (
             <button
               onClick={() => void toggleExpanded(!expanded)}
-              className="no-drag rounded-full border border-ink/10 bg-cream/70 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-ink/55 transition hover:border-gold hover:text-ink"
+              className="no-drag shrink-0 rounded-full border border-ink/10 bg-cream/70 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-ink/55 transition hover:border-gold hover:text-ink"
               aria-label={expanded ? "Collapse" : "Expand"}
             >
               {expanded ? "Collapse" : "Expand"}
             </button>
           )}
-          <div className="flex flex-col leading-tight">
+          <div className="flex min-w-0 flex-col leading-tight">
             <span className="eyebrow text-[8px]">Today</span>
-            <span className="font-serif text-[15px] leading-none text-ink">
+            <span className="truncate font-serif text-[15px] leading-none text-ink">
               {dateStr}
             </span>
           </div>
         </div>
-        {status === "ready" && planning && (
-          <div className="no-drag flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-gold-deep">
-            <span className="h-1.5 w-1.5 animate-ping rounded-full bg-gold" />
-            Building plan…
-          </div>
-        )}
-        {status === "ready" && (
-          <div className="no-drag flex items-center gap-1.5">
-            <button
-              onClick={() => setShowSettings(true)}
-              className="rounded-full px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink/45 transition hover:text-ink"
-            >
-              Settings
-            </button>
-            <button
-              onClick={() => void handleSignOut()}
-              className="rounded-full px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink/40 transition hover:text-ink/75"
-            >
-              Sign out
-            </button>
-          </div>
-        )}
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          {status === "ready" && planning && (
+            <div className="no-drag flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-2 py-1 font-mono text-[9px] uppercase tracking-wide text-gold-deep">
+              <span className="h-1.5 w-1.5 animate-ping rounded-full bg-gold" />
+              Building…
+            </div>
+          )}
+          {status === "ready" && (
+            <div className="no-drag flex items-center gap-0.5">
+              <button
+                onClick={() => setShowSettings(true)}
+                title="Settings"
+                aria-label="Settings"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-ink/45 transition hover:bg-ink/5 hover:text-ink"
+              >
+                <GearIcon />
+              </button>
+              <button
+                onClick={() => void handleSignOut()}
+                title="Sign out"
+                aria-label="Sign out"
+                className="flex h-7 w-7 items-center justify-center rounded-full text-ink/45 transition hover:bg-ink/5 hover:text-ink"
+              >
+                <LogoutIcon />
+              </button>
+            </div>
+          )}
+        </div>
         {/* gold hairline accent */}
         <span className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-transparent via-gold/45 to-transparent" />
       </header>
@@ -301,6 +349,7 @@ export default function App() {
               <BriefingPanel
                 briefing={briefing}
                 loading={loadingBriefing}
+                expanded={expanded}
                 userId={user.id}
                 onTaskAdded={() => {
                   setGoalsRefresh((n) => n + 1);
@@ -324,16 +373,21 @@ export default function App() {
                   />
                 </div>
 
-                <div
-                  className="rise mb-2.5 mt-9 flex items-center gap-1.5"
-                  style={{ animationDelay: "120ms" }}
-                >
-                  <span className="h-1 w-1 rounded-full bg-gold" />
-                  <span className="eyebrow">Goals</span>
-                </div>
-                <div className="rise" style={{ animationDelay: "150ms" }}>
-                  <GoalTracker userId={user.id} refreshKey={goalsRefresh} />
-                </div>
+                {/* Goals — expanded only (collapsed shows briefing + upcoming) */}
+                {expanded && (
+                  <>
+                    <div
+                      className="rise mb-2.5 mt-9 flex items-center gap-1.5"
+                      style={{ animationDelay: "120ms" }}
+                    >
+                      <span className="h-1 w-1 rounded-full bg-gold" />
+                      <span className="eyebrow">Goals</span>
+                    </div>
+                    <div className="rise" style={{ animationDelay: "150ms" }}>
+                      <GoalTracker userId={user.id} refreshKey={goalsRefresh} />
+                    </div>
+                  </>
+                )}
               </div>
             </section>
 

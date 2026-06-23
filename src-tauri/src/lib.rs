@@ -207,6 +207,20 @@ CREATE TABLE IF NOT EXISTS plans (
 );
 "#,
         },
+        Migration {
+            version: 7,
+            description: "cached daily inbox scans",
+            kind: MigrationKind::Up,
+            sql: r#"
+CREATE TABLE IF NOT EXISTS inbox_scans (
+  user_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  candidates TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, date)
+);
+"#,
+        },
     ]
 }
 

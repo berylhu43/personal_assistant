@@ -6,10 +6,13 @@ import type { PendingPlan } from "./store";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-// Hard ceilings so the plan path can NEVER hang silently. Web search is the
-// slow leg; the no-search fallback uses the proven plain-chat path.
-const SEARCH_TIMEOUT_MS = 75_000;
-const NOSEARCH_TIMEOUT_MS = 60_000;
+// Hard ceilings so the plan path can NEVER hang silently. Web search runs
+// several server-side searches plus a long structured output, so it genuinely
+// needs minutes — give it real headroom before falling back to the search-free
+// path. Generation now runs at App level (survives collapse), so a long wait is
+// fine; the indicator stays visible the whole time.
+const SEARCH_TIMEOUT_MS = 210_000; // 3.5 min
+const NOSEARCH_TIMEOUT_MS = 90_000;
 
 // A multi-week day-by-day plan with resources easily exceeds 4096 output
 // tokens; too small a budget truncates the JSON mid-array and parsing fails.

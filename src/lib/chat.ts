@@ -537,6 +537,7 @@ export async function runChatTurn(
 
   // Remember a pending plan request so the user's next-turn confirmation runs it.
   if (parsed.planRequest) {
+    console.log("[plan-debug] plan-request captured → pending set", parsed.planRequest);
     await setPendingPlan(parsed.planRequest);
   }
 

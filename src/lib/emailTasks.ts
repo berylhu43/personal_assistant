@@ -2,6 +2,7 @@ import { getRecentEmailsWithBody } from "./google";
 import { chat } from "./anthropic";
 import { listUpcoming } from "./localCalendar";
 import { listGoals } from "./goals";
+import { selectOne, execute } from "./db";
 
 /** Local date as YYYY-MM-DD (kept local so briefing.ts can import this module). */
 function todayStr(): string {
@@ -109,4 +110,61 @@ Extract the actionable task candidates as JSON now.`;
     });
   }
   return out;
+}
+
+// ---- daily cache (one scan per day; manual refresh re-spends tokens) ----
+
+async function writeCache(
+  userId: string,
+  candidates: EmailTaskCandidate[]
+): Promise<void> {
+  await execute(
+    `INSERT INTO inbox_scans (user_id, date, candidates)
+     VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_id, date) DO UPDATE SET
+       candidates = excluded.candidates, created_at = datetime('now')`,
+    [userId, todayStr(), JSON.stringify(candidates)]
+  );
+}
+
+/**
+ * Return today's inbox candidates from cache if present; otherwise run the scan
+ * (one model call), cache it for today, and return it. Mirrors the briefing's
+ * get-or-generate pattern so re-expanding the same day costs no tokens.
+ */
+export async function getOrScanInbox(
+  userId: string
+): Promise<EmailTaskCandidate[]> {
+  const row = await selectOne<{ candidates: string }>(
+    `SELECT candidates FROM inbox_scans WHERE user_id = ?1 AND date = ?2`,
+    [userId, todayStr()]
+  );
+  if (row) {
+    try {
+      const parsed = JSON.parse(row.candidates);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      /* fall through to a fresh scan */
+    }
+  }
+  const candidates = await scanInboxForTasks(userId);
+  await writeCache(userId, candidates);
+  return candidates;
+}
+
+/** Force a fresh scan, overwriting today's cache. Backs the manual Refresh. */
+export async function rescanInbox(
+  userId: string
+): Promise<EmailTaskCandidate[]> {
+  const candidates = await scanInboxForTasks(userId);
+  await writeCache(userId, candidates);
+  return candidates;
+}
+
+/** Overwrite today's cached candidates (after an Add/Dismiss removes one). */
+export async function setCachedInbox(
+  userId: string,
+  candidates: EmailTaskCandidate[]
+): Promise<void> {
+  await writeCache(userId, candidates);
 }

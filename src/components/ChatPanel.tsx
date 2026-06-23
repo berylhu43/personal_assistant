@@ -63,6 +63,7 @@ export default function ChatPanel({
       // A learning-plan confirmation: hand off to App (survives collapse). The
       // App-driven indicator + result/Download will render below.
       if (result.planConfirmed) {
+        console.log("[plan-debug] ChatPanel: planConfirmed → onPlanConfirmed");
         onPlanConfirmed(result.planConfirmed);
         return;
       }

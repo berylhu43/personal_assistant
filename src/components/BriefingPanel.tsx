@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { scanInboxForTasks, type EmailTaskCandidate } from "../lib/emailTasks";
+import {
+  getOrScanInbox,
+  rescanInbox,
+  setCachedInbox,
+  type EmailTaskCandidate,
+} from "../lib/emailTasks";
 import { createCommitment } from "../lib/localCalendar";
 import { saveGoal } from "../lib/goals";
 import type { Briefing } from "../lib/types";
@@ -14,11 +19,13 @@ function todayKey(): string {
 export default function BriefingPanel({
   briefing,
   loading,
+  expanded,
   userId,
   onTaskAdded,
 }: {
   briefing: Briefing | null;
   loading: boolean;
+  expanded: boolean;
   userId: string;
   onTaskAdded: () => void;
 }) {
@@ -31,26 +38,33 @@ export default function BriefingPanel({
   // Only the notes list collapses — the summary is always visible.
   const [notesOpen, setNotesOpen] = useState(true);
 
-  const scan = useCallback(async () => {
-    setScanning(true);
-    setError(null);
-    try {
-      setCandidates(await scanInboxForTasks(userId));
-    } catch (e) {
-      console.error("inbox scan failed:", e);
-      setError(`Couldn't scan: ${e instanceof Error ? e.message : String(e)}`);
-      setCandidates([]);
-    } finally {
-      setScanning(false);
-    }
-  }, [userId]);
+  // `force` re-spends tokens (manual Refresh); otherwise use the daily cache.
+  const scan = useCallback(
+    async (force: boolean) => {
+      setScanning(true);
+      setError(null);
+      try {
+        setCandidates(
+          force ? await rescanInbox(userId) : await getOrScanInbox(userId)
+        );
+      } catch (e) {
+        console.error("inbox scan failed:", e);
+        setError(`Couldn't scan: ${e instanceof Error ? e.message : String(e)}`);
+        setCandidates([]);
+      } finally {
+        setScanning(false);
+      }
+    },
+    [userId]
+  );
 
-  // Scan once when the panel mounts — guarded so re-renders don't re-trigger.
+  // Scan only when the Inbox is actually shown (expanded). Cached per-day, so
+  // re-expanding the same day costs no tokens. Collapsed never scans.
   useEffect(() => {
-    if (startedRef.current) return;
+    if (!expanded || startedRef.current) return;
     startedRef.current = true;
-    void scan();
-  }, [scan]);
+    void scan(false);
+  }, [expanded, scan]);
 
   async function addCandidate(c: EmailTaskCandidate) {
     if (c.task.kind === "goal") {
@@ -64,12 +78,16 @@ export default function BriefingPanel({
         source: "email",
       });
     }
-    setCandidates((prev) => (prev ?? []).filter((x) => x !== c));
+    const next = (candidates ?? []).filter((x) => x !== c);
+    setCandidates(next);
+    await setCachedInbox(userId, next); // so it doesn't reappear next read
     onTaskAdded();
   }
 
   function dismiss(c: EmailTaskCandidate) {
-    setCandidates((prev) => (prev ?? []).filter((x) => x !== c));
+    const next = (candidates ?? []).filter((x) => x !== c);
+    setCandidates(next);
+    void setCachedInbox(userId, next);
   }
 
   return (
@@ -81,11 +99,11 @@ export default function BriefingPanel({
 
       {briefing ? (
         <>
-          {/* Summary — always visible */}
+          {/* Summary — always visible (collapsed shows only this) */}
           <p className="font-serif text-[17px] leading-snug text-ink">
             {briefing.summary}
           </p>
-          {briefing.notes.length > 0 && (
+          {expanded && briefing.notes.length > 0 && (
             <div className="mt-2.5">
               {notesOpen && (
                 <ul className="mb-2 space-y-1.5">
@@ -120,7 +138,8 @@ export default function BriefingPanel({
         </p>
       )}
 
-      {/* Inbox — extracted tasks to confirm */}
+      {/* Inbox — expanded only (collapsed never scans) */}
+      {expanded && (
       <div className="mt-6">
         <div className="mb-2 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
@@ -128,9 +147,9 @@ export default function BriefingPanel({
             <span className="eyebrow">Inbox</span>
           </div>
           <button
-            onClick={() => void scan()}
+            onClick={() => void scan(true)}
             disabled={scanning}
-            className="rounded-full border border-ink/15 px-2.5 py-1 font-sans text-xs font-medium text-ink/70 transition hover:border-gold hover:bg-gold/5 hover:text-ink disabled:opacity-50"
+            className="shrink-0 rounded-full bg-ink/5 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wide text-gold-deep transition hover:bg-gold hover:text-cream disabled:opacity-50 disabled:hover:bg-ink/5 disabled:hover:text-gold-deep"
           >
             {scanning ? "Scanning…" : "Refresh"}
           </button>
@@ -186,6 +205,7 @@ export default function BriefingPanel({
           </ul>
         )}
       </div>
+      )}
     </div>
   );
 }
