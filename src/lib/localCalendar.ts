@@ -46,6 +46,17 @@ function tomorrowStr(): string {
 }
 
 /**
+ * The coming Sunday — end of the current Mon–Sun week (matching the weekly-goal
+ * convention). If today is Sunday, returns today. Local-date math.
+ */
+function thisSundayStr(): string {
+  const d = new Date();
+  const dow = d.getDay(); // 0=Sun … 6=Sat
+  d.setDate(d.getDate() + (dow === 0 ? 0 : 7 - dow));
+  return dateStr(d);
+}
+
+/**
  * What the Upcoming panel lists. Date-ascending. Open tasks only.
  * - Daily / one-off (span IS NULL): overdue + today + tomorrow (date <= tomorrow).
  * - Weekly (span = 'week'): the week containing today, plus overdue past weeks
@@ -61,6 +72,42 @@ export async function listThroughTomorrow(userId: string): Promise<Commitment[]>
      )
      ORDER BY date ASC, COALESCE(time, '99:99') ASC LIMIT 50`,
     [userId, tomorrowStr(), todayStr()]
+  );
+  return rows.map(rowToCommitment);
+}
+
+/**
+ * Single commitments (source != 'goal' — chat / manual / email) due later this
+ * week: from the day AFTER tomorrow through the coming Sunday, so a one-off due
+ * Thursday surfaces on Tuesday instead of staying hidden until the day before.
+ * Excludes plan daily tasks (source = 'goal') so long plans don't flood the
+ * list, and excludes today/tomorrow (already shown in the main group).
+ */
+export async function listLaterThisWeek(userId: string): Promise<Commitment[]> {
+  const rows = await select<CommitmentRow>(
+    `SELECT * FROM calendar
+     WHERE user_id = ?1 AND done = 0 AND COALESCE(source, '') != 'goal'
+       AND date > ?2 AND date <= ?3
+     ORDER BY date ASC, COALESCE(time, '99:99') ASC LIMIT 50`,
+    [userId, tomorrowStr(), thisSundayStr()]
+  );
+  return rows.map(rowToCommitment);
+}
+
+/**
+ * Single commitments (source != 'goal') due from tomorrow through the coming
+ * Sunday — used by the briefing to proactively flag things due soon. Plan daily
+ * tasks are excluded so the briefing isn't spammed with "AI Agents Day 5/6".
+ */
+export async function listSingleUpcomingThisWeek(
+  userId: string
+): Promise<Commitment[]> {
+  const rows = await select<CommitmentRow>(
+    `SELECT * FROM calendar
+     WHERE user_id = ?1 AND done = 0 AND COALESCE(source, '') != 'goal'
+       AND date > ?2 AND date <= ?3
+     ORDER BY date ASC, COALESCE(time, '99:99') ASC LIMIT 50`,
+    [userId, todayStr(), thisSundayStr()]
   );
   return rows.map(rowToCommitment);
 }

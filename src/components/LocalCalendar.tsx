@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   listThroughTomorrow,
+  listLaterThisWeek,
   createCommitment,
   setCommitmentDone,
   deleteCommitment,
@@ -53,6 +54,9 @@ export default function LocalCalendar({
   onTaskToggled?: () => void;
 }) {
   const [items, setItems] = useState<Commitment[]>([]);
+  // Single (non-plan) commitments due later this week — surfaced so a one-off
+  // due Thursday isn't hidden until the day before.
+  const [later, setLater] = useState<Commitment[]>([]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(todayKey());
@@ -88,6 +92,7 @@ export default function LocalCalendar({
 
   const refresh = useCallback(() => {
     listThroughTomorrow(userId).then(setItems).catch(() => setItems([]));
+    listLaterThisWeek(userId).then(setLater).catch(() => setLater([]));
   }, [userId]);
 
   useEffect(() => {
@@ -123,6 +128,89 @@ export default function LocalCalendar({
 
   const today = todayKey();
 
+  function renderTask(c: Commitment) {
+    const isWeekly = c.span === "week";
+    const overdue = isWeekly ? addDays(c.date, 6) < today : c.date < today;
+    return (
+      <li key={c.id} className="group flex items-start gap-2.5">
+        <button
+          onClick={() => toggle(c)}
+          aria-label={c.done ? "Mark not done" : "Mark done"}
+          className={`mt-0.5 h-[18px] w-[18px] shrink-0 rounded-[6px] border transition ${
+            c.done ? "border-done bg-done" : "border-ink/25 hover:border-gold"
+          }`}
+        />
+        <div className="min-w-0 flex-1">
+          <p
+            onClick={() => void toggleExpand(c)}
+            title="Click to expand"
+            className={`cursor-pointer font-sans text-sm leading-snug text-ink ${
+              expanded.has(c.id) ? "whitespace-normal break-words" : "truncate"
+            }`}
+          >
+            {c.title}
+          </p>
+          <p
+            className={`mt-0.5 font-mono text-[10px] uppercase tracking-wide ${
+              overdue ? "font-bold text-gold-deep" : "text-ink/40"
+            }`}
+          >
+            {isWeekly ? formatWeek(c.date) : formatDate(c.date)}
+            {c.time ? ` · ${c.time}` : ""}
+            {overdue ? " · overdue" : ""}
+          </p>
+
+          {/* Expanded plan-day detail (learning-plan tasks) */}
+          {expanded.has(c.id) && dayById[c.id] && (
+            <div className="mt-1.5 border-l border-gold/40 pl-2.5">
+              {dayById[c.id]!.task && (
+                <p className="font-sans text-[11px] leading-snug text-ink/65">
+                  {dayById[c.id]!.task}
+                </p>
+              )}
+              {dayById[c.id]!.practice && (
+                <p className="font-sans text-[11px] leading-snug text-ink/55">
+                  Practice: {dayById[c.id]!.practice}
+                </p>
+              )}
+              {dayById[c.id]!.est_time && (
+                <p className="font-mono text-[10px] text-ink/40">
+                  {dayById[c.id]!.est_time}
+                </p>
+              )}
+              {dayById[c.id]!.resources?.length ? (
+                <ul className="mt-0.5 space-y-1">
+                  {dayById[c.id]!.resources!.map((r, j) => (
+                    <li
+                      key={j}
+                      className="selectable font-mono text-[10px] leading-snug text-ink/55"
+                    >
+                      {r.title} —{" "}
+                      <button
+                        onClick={() => void openExternal(r.url)}
+                        className="break-all text-left text-gold-deep underline-offset-2 hover:underline"
+                        title="Open in browser"
+                      >
+                        {r.url}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          )}
+        </div>
+        <button
+          onClick={() => remove(c.id)}
+          aria-label="Remove task"
+          className="font-mono leading-none text-ink/25 opacity-0 transition group-hover:opacity-100 hover:text-ink/60"
+        >
+          ×
+        </button>
+      </li>
+    );
+  }
+
   return (
     <div>
       {items.length === 0 ? (
@@ -130,96 +218,19 @@ export default function LocalCalendar({
           No upcoming tasks.
         </p>
       ) : (
-        <ul className="space-y-2.5">
-          {items.map((c) => {
-            const isWeekly = c.span === "week";
-            const overdue = isWeekly
-              ? addDays(c.date, 6) < today
-              : c.date < today;
-            return (
-              <li key={c.id} className="group flex items-start gap-2.5">
-                <button
-                  onClick={() => toggle(c)}
-                  aria-label={c.done ? "Mark not done" : "Mark done"}
-                  className={`mt-0.5 h-[18px] w-[18px] shrink-0 rounded-[6px] border transition ${
-                    c.done
-                      ? "border-done bg-done"
-                      : "border-ink/25 hover:border-gold"
-                  }`}
-                />
-                <div className="min-w-0 flex-1">
-                  <p
-                    onClick={() => void toggleExpand(c)}
-                    title="Click to expand"
-                    className={`cursor-pointer font-sans text-sm leading-snug text-ink ${
-                      expanded.has(c.id)
-                        ? "whitespace-normal break-words"
-                        : "truncate"
-                    }`}
-                  >
-                    {c.title}
-                  </p>
-                  <p
-                    className={`mt-0.5 font-mono text-[10px] uppercase tracking-wide ${
-                      overdue ? "font-bold text-gold-deep" : "text-ink/40"
-                    }`}
-                  >
-                    {isWeekly ? formatWeek(c.date) : formatDate(c.date)}
-                    {c.time ? ` · ${c.time}` : ""}
-                    {overdue ? " · overdue" : ""}
-                  </p>
+        <ul className="space-y-2.5">{items.map(renderTask)}</ul>
+      )}
 
-                  {/* Expanded plan-day detail (learning-plan tasks) */}
-                  {expanded.has(c.id) && dayById[c.id] && (
-                    <div className="mt-1.5 border-l border-gold/40 pl-2.5">
-                      {dayById[c.id]!.task && (
-                        <p className="font-sans text-[11px] leading-snug text-ink/65">
-                          {dayById[c.id]!.task}
-                        </p>
-                      )}
-                      {dayById[c.id]!.practice && (
-                        <p className="font-sans text-[11px] leading-snug text-ink/55">
-                          Practice: {dayById[c.id]!.practice}
-                        </p>
-                      )}
-                      {dayById[c.id]!.est_time && (
-                        <p className="font-mono text-[10px] text-ink/40">
-                          {dayById[c.id]!.est_time}
-                        </p>
-                      )}
-                      {dayById[c.id]!.resources?.length ? (
-                        <ul className="mt-0.5 space-y-1">
-                          {dayById[c.id]!.resources!.map((r, j) => (
-                            <li
-                              key={j}
-                              className="selectable font-mono text-[10px] leading-snug text-ink/55"
-                            >
-                              {r.title} —{" "}
-                              <button
-                                onClick={() => void openExternal(r.url)}
-                                className="break-all text-left text-gold-deep underline-offset-2 hover:underline"
-                                title="Open in browser"
-                              >
-                                {r.url}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={() => remove(c.id)}
-                  aria-label="Remove task"
-                  className="font-mono leading-none text-ink/25 opacity-0 transition group-hover:opacity-100 hover:text-ink/60"
-                >
-                  ×
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+      {later.length > 0 && (
+        <div className="mt-5">
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="h-1 w-1 rounded-full bg-ink/20" />
+            <span className="font-mono text-[10px] uppercase tracking-wide text-ink/40">
+              Later this week
+            </span>
+          </div>
+          <ul className="space-y-2.5 opacity-90">{later.map(renderTask)}</ul>
+        </div>
       )}
 
       <form onSubmit={add} className="no-drag mt-4 flex items-center gap-2">

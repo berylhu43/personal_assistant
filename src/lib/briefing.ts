@@ -1,6 +1,9 @@
 import { selectOne, execute, uid } from "./db";
 import { getTodayEvents } from "./google";
-import { listTodayAndOverdue } from "./localCalendar";
+import {
+  listTodayAndOverdue,
+  listSingleUpcomingThisWeek,
+} from "./localCalendar";
 import { listGoals } from "./goals";
 import { listMemories } from "./memory";
 import { chat } from "./anthropic";
@@ -83,6 +86,26 @@ function formatCommitments(commitments: Commitment[], today: string): string {
     .join("\n");
 }
 
+/**
+ * Single commitments due later this week, with their weekday and lead time, so
+ * the briefing can proactively flag "Report due Thursday — 2 days out".
+ */
+function formatUpcoming(commitments: Commitment[], today: string): string {
+  if (!commitments.length) return "  (none)";
+  const base = new Date(`${today}T00:00:00`);
+  return commitments
+    .map((c) => {
+      const d = new Date(`${c.date}T00:00:00`);
+      const daysOut = Math.round((d.getTime() - base.getTime()) / 86_400_000);
+      const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
+      const lead =
+        daysOut <= 1 ? "tomorrow" : `${weekday} — ${daysOut} days out`;
+      const when = c.time ? `${c.date} ${c.time}` : c.date;
+      return `  - ${when} (${lead}) — ${c.title}`;
+    })
+    .join("\n");
+}
+
 function formatGoals(goals: Goal[]): string {
   if (!goals.length) return "  (none)";
   return goals
@@ -96,10 +119,11 @@ function formatMemoriesForBriefing(memories: Memory[]): string {
 }
 
 const BRIEFING_SYSTEM = `You write a terse morning briefing for a personal assistant memo widget.
-You are given today's Google Calendar events, the user's LOCAL commitments (today + overdue), open goals, and long-term memory. Respond ONLY with JSON of the form:
+You are given today's Google Calendar events, the user's LOCAL commitments (today + overdue), single commitments DUE LATER THIS WEEK (with weekday and lead time), open goals, and long-term memory. Respond ONLY with JSON of the form:
 { "summary": "...", "notes": ["...", "..."] }
 - summary: ONE or AT MOST TWO short sentences (hard cap). No preamble, no greeting filler — just what matters today.
 - notes: 0–5 short bullets (fragments, not sentences) surfacing prep reminders for meetings, overdue/today commitments, goal nudges, and dependencies (e.g. buy ingredients the day before baking).
+- For commitments due later this week, proactively call them out with their day and lead time (e.g. "Report due Thursday — 2 days out") so nothing sneaks up. Do this even though they aren't due today.
 No prose outside the JSON.`;
 
 /** Fetch context, ask Claude, persist, and return today's briefing. */
@@ -108,9 +132,10 @@ export async function generateBriefing(userId: string): Promise<Briefing> {
   // Sources: calendar, local commitments, open goals, and long-term memory.
   // Email is intentionally excluded — email task extraction lives only in the
   // inbox panel (scanInboxForTasks).
-  const [events, commitments, goals, memories] = await Promise.all([
+  const [events, commitments, upcoming, goals, memories] = await Promise.all([
     getTodayEvents().catch(() => [] as CalendarEvent[]),
     listTodayAndOverdue(userId, dateKey).catch(() => [] as Commitment[]),
+    listSingleUpcomingThisWeek(userId).catch(() => [] as Commitment[]),
     listGoals(userId).catch(() => [] as Goal[]),
     listMemories(userId).catch(() => [] as Memory[]),
   ]);
@@ -130,6 +155,9 @@ ${formatEvents(events)}
 
 Local commitments (today + overdue):
 ${formatCommitments(commitments, dateKey)}
+
+Due later this week (single commitments — flag these proactively):
+${formatUpcoming(upcoming, dateKey)}
 
 Open goals:
 ${formatGoals(openGoals)}
