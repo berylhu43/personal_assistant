@@ -7,6 +7,7 @@ import {
 } from "../lib/emailTasks";
 import { createCommitment } from "../lib/localCalendar";
 import { saveGoal } from "../lib/goals";
+import { friendlyError } from "../lib/errors";
 import type { Briefing } from "../lib/types";
 
 function todayKey(): string {
@@ -49,7 +50,7 @@ export default function BriefingPanel({
         );
       } catch (e) {
         console.error("inbox scan failed:", e);
-        setError(`Couldn't scan: ${e instanceof Error ? e.message : String(e)}`);
+        setError(friendlyError(e));
         setCandidates([]);
       } finally {
         setScanning(false);

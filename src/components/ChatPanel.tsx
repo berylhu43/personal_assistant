@@ -3,6 +3,7 @@ import { runChatTurn, clearMessages } from "../lib/chat";
 import { distillConversation } from "../lib/distill";
 import { downloadPlan } from "../lib/planExport";
 import { MissingApiKeyError } from "../lib/anthropic";
+import { friendlyError } from "../lib/errors";
 import type { PendingPlan } from "../lib/store";
 import type { CalendarEvent, PendingEmail, ChatMessage } from "../lib/types";
 
@@ -74,28 +75,16 @@ export default function ChatPanel({
       if (result.createdGoal) onGoalCreated();
       if (result.createdCommitment) onCommitmentCreated();
     } catch (e) {
-      if (e instanceof MissingApiKeyError) {
-        onNeedApiKey();
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: "Add your Anthropic API key in settings and I'll be ready.",
-          },
-        ]);
-      } else {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: `Something went wrong: ${
-              (e as Error)?.message ?? "unknown error"
-            }`,
-          },
-        ]);
-      }
+      console.error("chat turn failed:", e);
+      if (e instanceof MissingApiKeyError) onNeedApiKey();
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: friendlyError(e),
+        },
+      ]);
     } finally {
       setSending(false);
     }
