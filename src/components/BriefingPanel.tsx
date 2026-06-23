@@ -150,9 +150,27 @@ export default function BriefingPanel({
           <button
             onClick={() => void scan(true)}
             disabled={scanning}
-            className="shrink-0 rounded-full bg-ink/5 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wide text-gold-deep transition hover:bg-gold hover:text-cream disabled:opacity-50 disabled:hover:bg-ink/5 disabled:hover:text-gold-deep"
+            title="Refresh inbox"
+            aria-label="Refresh inbox"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink/45 transition hover:bg-ink/5 hover:text-ink disabled:opacity-50 disabled:hover:bg-transparent"
           >
-            {scanning ? "Scanning…" : "Refresh"}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              className={scanning ? "animate-spin" : ""}
+            >
+              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+              <path d="M21 3v5h-5" />
+              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+              <path d="M8 16H3v5" />
+            </svg>
           </button>
         </div>
 

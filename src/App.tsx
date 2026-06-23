@@ -276,10 +276,26 @@ export default function App() {
           {status === "ready" && (
             <button
               onClick={() => void toggleExpanded(!expanded)}
-              className="no-drag shrink-0 font-sans text-xs text-ink/45 transition hover:text-ink"
+              title={expanded ? "Collapse" : "Expand chat"}
               aria-label={expanded ? "Collapse" : "Expand"}
+              className="no-drag flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-ink/45 transition hover:bg-ink/5 hover:text-ink"
             >
-              {expanded ? "Collapse" : "Expand"}
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+                className={`transition-transform duration-200 ${
+                  expanded ? "" : "rotate-180"
+                }`}
+              >
+                <polyline points="15 18 9 12 15 6" />
+              </svg>
             </button>
           )}
           <div className="flex min-w-0 flex-col leading-tight">
