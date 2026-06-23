@@ -7,7 +7,7 @@ import { chat } from "./anthropic";
 // pdf.js runs its parser in a Web Worker; point it at the bundled worker.
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
-const MAX_CHARS = 12_000; // cap text sent to the model
+const MAX_CHARS = 40_000; // cap text sent to the model (fits a full syllabus)
 const ALLOWED = ["pdf", "txt", "md"];
 
 /** A deliverable extracted from an uploaded document, pending user confirmation. */
@@ -21,6 +21,10 @@ export interface AssignmentCandidate {
 export interface ExtractionResult {
   course: string | null;
   items: AssignmentCandidate[];
+  // True when the model couldn't confidently determine due dates and needs the
+  // user to supply missing info (e.g. the term start date) rather than guess.
+  needsInfo: boolean;
+  question: string | null;
 }
 
 /** Carries a user-facing message (scanned PDF, unsupported type, etc.). */
@@ -101,21 +105,27 @@ export async function extractText(
   return { name, text };
 }
 
-const EXTRACT_SYSTEM = `You read the text of a course syllabus or assignment document and extract ONLY concrete graded/required deliverables that have a DUE DATE.
+const EXTRACT_SYSTEM = `You read the text of a course syllabus or assignment document and extract the graded/required deliverables the student must complete (problem sets, mini-projects, essays, quizzes, exams, presentations, etc.).
 
 Return ONLY JSON of this exact shape (no prose, no markdown fences):
-{ "course": "CS101", "items": [ { "title": "Essay 1", "due": "YYYY-MM-DD", "type": "assignment", "note": "optional short detail" } ] }
+{ "course": "CS101", "needsInfo": false, "question": null, "items": [ { "title": "Problem Set 1", "due": "YYYY-MM-DD", "type": "assignment", "note": "optional short detail" } ] }
 
 Rules:
 - course: the course code or name if clearly identifiable, otherwise null.
-- items: each must be a real, required, graded deliverable WITH a due date.
-- title: short and specific (e.g. "Problem Set 3", "Midterm Exam", "Reading Response 2").
-- due: ABSOLUTE date YYYY-MM-DD. Resolve relative dates ("Week 3 Friday", "by Friday", "end of week 5") to absolute dates using today's date as the reference point. If an item has no determinable due date, OMIT it.
-- type: one of "assignment", "exam", "quiz", "reading".
-- note: optional short detail (weight, page count) — omit if nothing useful.
-- IGNORE office hours, grading policies, course descriptions, recommended/optional readings without deadlines, and anything without a concrete due date.
+- items: every distinct required/graded deliverable for which you can determine a CONFIDENT due date. Schedule tables often list these by WEEK in a "Due", "Due / Quiz", or "Assignment" column (e.g. "PS 1" in Week 3, a quiz, a midterm, a final). Expand abbreviations using the syllabus's own legend (e.g. "PS" = "Problem Set", "MP" = "Mini-Project").
+- title: short and specific (e.g. "Problem Set 1", "Mini-Project 2", "Final Exam").
+- due: ABSOLUTE date YYYY-MM-DD. To resolve a week-relative deadline ("Week 3", "by Friday") you need the term's Week 1 start date and any day-of-week rule (e.g. "assignments due Thursday evenings", "quizzes on Fridays"). Use explicit dates given in the document OR in the user's additional context.
+- type: one of "assignment", "exam", "quiz", "reading". Problem sets / projects / essays = "assignment".
+- note: optional short detail (weight, format, related reading) — keep brief, omit if nothing useful.
+
+WHEN YOU CANNOT DETERMINE CONFIDENT DUE DATES — ASK, DO NOT GUESS:
+- If the deliverables are week-relative (or otherwise undated) and NEITHER the document NOR the user's additional context gives you a reliable anchor (the term / Week 1 start date, or explicit calendar dates), DO NOT estimate or guess. Instead set "needsInfo": true, "items": [], and "question" to a SPECIFIC, friendly question asking for exactly what you need — e.g. "This syllabus lists assignments by week but gives no calendar dates. What date does Week 1 (or the term) begin? I'll work out the rest." If a day-of-week rule for deadlines is also missing, ask for that too.
+- When "needsInfo" is false, "question" must be null.
+- Never fabricate or approximate a date just to fill the field. A confident date or an honest question — never a guess.
+
+- IGNORE office hours, grading policies, course descriptions, and recommended/optional readings that are not graded deliverables.
 - All text must be PLAIN TEXT — no emoji or decorative symbols.
-- If nothing qualifies, return { "course": null, "items": [] }.`;
+- If the document genuinely contains no graded deliverables at all, return { "course": ..., "needsInfo": false, "question": null, "items": [] }.`;
 
 /** Defensively parse model JSON (strip ```json fences, match outer braces). */
 function parseJson(raw: string): any {
@@ -132,10 +142,16 @@ const TYPES = ["assignment", "exam", "quiz", "reading"] as const;
  * (no web search). Does NOT write to any store — the user confirms each item.
  */
 export async function extractAssignments(
-  text: string
+  text: string,
+  supplement?: string
 ): Promise<ExtractionResult> {
-  const userMsg = `Today's date is ${todayStr()}.
+  const note = supplement?.trim()
+    ? `\nAdditional context / instructions from the user (use this to resolve dates or focus the extraction):
+${supplement.trim()}\n`
+    : "";
 
+  const userMsg = `Today's date is ${todayStr()}.
+${note}
 Document text:
 ${text}
 
@@ -147,7 +163,7 @@ Extract the graded/required deliverables with due dates as JSON now.`;
   try {
     parsed = parseJson(raw);
   } catch {
-    return { course: null, items: [] };
+    return { course: null, items: [], needsInfo: false, question: null };
   }
 
   const items: AssignmentCandidate[] = [];
@@ -168,5 +184,10 @@ Extract the graded/required deliverables with due dates as JSON now.`;
     typeof parsed?.course === "string" && parsed.course.trim()
       ? parsed.course.trim()
       : null;
-  return { course, items };
+  const needsInfo = parsed?.needsInfo === true && items.length === 0;
+  const question =
+    typeof parsed?.question === "string" && parsed.question.trim()
+      ? parsed.question.trim()
+      : null;
+  return { course, items, needsInfo, question };
 }
