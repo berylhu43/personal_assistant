@@ -23,6 +23,8 @@ export interface GoalRow {
   done: number; // 0 | 1
   plan: string | null; // JSON
   target_date: string | null; // optional YYYY-MM-DD
+  task_total: number; // # of linked tasks (0 = manual progress)
+  granularity: string; // 'daily' | 'weekly'
   created_at: string;
 }
 
@@ -60,6 +62,8 @@ export interface CommitmentRow {
   time: string | null; // optional HH:mm
   source: string | null;
   done: number; // 0 | 1
+  goal_id: string | null; // links a daily task to its goal
+  span: string | null; // 'week' = weekly task; NULL = daily/one-off
   created_at: string;
 }
 
@@ -72,6 +76,8 @@ export interface Goal {
   done: boolean;
   plan: WeeklyPlanItem[] | null;
   targetDate: string | null; // optional YYYY-MM-DD
+  taskTotal: number; // # of linked tasks (0 = manual progress)
+  granularity: "daily" | "weekly";
   createdAt: string;
 }
 
@@ -91,6 +97,29 @@ export interface Memory {
   createdAt: string; // ISO/SQLite datetime
 }
 
+export interface PlanRow {
+  id: string;
+  goal_id: string | null;
+  title: string;
+  content: string; // JSON string: PlanDay[]
+  created_at: string;
+}
+
+export interface PlanResource {
+  kind: "repo" | "article" | "doc" | "code" | string;
+  title: string;
+  url: string;
+}
+
+export interface PlanDay {
+  date: string; // YYYY-MM-DD
+  topic: string;
+  task: string;
+  practice?: string;
+  resources?: PlanResource[];
+  est_time?: string;
+}
+
 export interface Commitment {
   id: string;
   title: string;
@@ -98,6 +127,8 @@ export interface Commitment {
   time: string | null; // optional HH:mm
   done: boolean;
   source: string | null;
+  goalId: string | null; // links a daily task to its goal
+  span: "week" | null; // 'week' = weekly task; null = daily/one-off
   createdAt: string;
 }
 

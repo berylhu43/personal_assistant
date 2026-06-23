@@ -16,6 +16,8 @@ const KEY_ANTHROPIC = "anthropic_api_key";
 const KEY_LOCAL_USER = "local_user_id";
 const KEY_CONSOLIDATED = "data_consolidated_v1";
 const KEY_RELATIVE_PURGED = "memories_purged_relative_v1";
+const KEY_TITLES_CLEANED = "titles_deemojified_v1";
+const KEY_PENDING_PLAN = "pending_plan";
 
 export async function getApiKey(): Promise<string | null> {
   const s = await store();
@@ -60,4 +62,35 @@ export async function isRelativeMemoriesPurged(): Promise<boolean> {
 export async function setRelativeMemoriesPurged(): Promise<void> {
   const s = await store();
   await s.set(KEY_RELATIVE_PURGED, true);
+}
+
+export async function areTitlesCleaned(): Promise<boolean> {
+  const s = await store();
+  return (await s.get<boolean>(KEY_TITLES_CLEANED)) === true;
+}
+
+export async function setTitlesCleaned(): Promise<void> {
+  const s = await store();
+  await s.set(KEY_TITLES_CLEANED, true);
+}
+
+/** A learning-plan request the assistant asked the user to confirm. */
+export interface PendingPlan {
+  topic: string;
+  targetDate?: string;
+}
+
+export async function getPendingPlan(): Promise<PendingPlan | null> {
+  const s = await store();
+  return (await s.get<PendingPlan>(KEY_PENDING_PLAN)) ?? null;
+}
+
+export async function setPendingPlan(p: PendingPlan): Promise<void> {
+  const s = await store();
+  await s.set(KEY_PENDING_PLAN, p);
+}
+
+export async function clearPendingPlan(): Promise<void> {
+  const s = await store();
+  await s.delete(KEY_PENDING_PLAN);
 }

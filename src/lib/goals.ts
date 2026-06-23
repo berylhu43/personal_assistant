@@ -1,12 +1,12 @@
-import { select, execute, uid } from "./db";
+import { select, selectOne, execute, uid, stripEmoji } from "./db";
 import type { Goal, GoalRow, WeeklyPlanItem } from "./types";
 
 /**
- * Normalize a title for dedup: lowercase, drop straight & curly quotes,
- * collapse whitespace, and strip surrounding punctuation.
+ * Normalize a title for dedup: drop emoji, lowercase, drop straight & curly
+ * quotes, collapse whitespace, and strip surrounding punctuation.
  */
 export function normTitle(t: string): string {
-  return t
+  return stripEmoji(t)
     .toLowerCase()
     .replace(/[“”‘’„‟'"`]/g, "")
     .replace(/\s+/g, " ")
@@ -30,6 +30,8 @@ function rowToGoal(r: GoalRow): Goal {
     done: r.done === 1,
     plan,
     targetDate: r.target_date,
+    taskTotal: r.task_total,
+    granularity: r.granularity === "weekly" ? "weekly" : "daily",
     createdAt: r.created_at,
   };
 }
@@ -40,6 +42,11 @@ export async function listGoals(userId: string): Promise<Goal[]> {
     [userId]
   );
   return rows.map(rowToGoal);
+}
+
+export async function getGoalById(id: string): Promise<Goal | null> {
+  const row = await selectOne<GoalRow>(`SELECT * FROM goals WHERE id = ?1`, [id]);
+  return row ? rowToGoal(row) : null;
 }
 
 export async function createGoal(input: {
@@ -54,7 +61,7 @@ export async function createGoal(input: {
     [
       id,
       input.userId,
-      input.title,
+      stripEmoji(input.title),
       input.plan ? JSON.stringify(input.plan) : null,
       input.targetDate ?? null,
     ]
@@ -89,7 +96,55 @@ export async function saveGoal(input: {
     return existing.id;
   }
 
+  // New goal. Daily tasks (if any) are model-planned and linked by the caller
+  // (applyActions), which also sets task_total via setGoalTaskTotal.
   return createGoal(input);
+}
+
+/** Set how many linked tasks a goal has (drives read-only progress). */
+export async function setGoalTaskTotal(
+  goalId: string,
+  n: number
+): Promise<void> {
+  await execute(`UPDATE goals SET task_total = ?1 WHERE id = ?2`, [n, goalId]);
+}
+
+/** Set whether a goal's linked tasks are daily or weekly. */
+export async function setGoalGranularity(
+  goalId: string,
+  granularity: "daily" | "weekly"
+): Promise<void> {
+  await execute(`UPDATE goals SET granularity = ?1 WHERE id = ?2`, [
+    granularity,
+    goalId,
+  ]);
+}
+
+/**
+ * Recompute a goal's progress from its completed linked daily tasks.
+ * No-op for goals without linked tasks (task_total = 0).
+ */
+export async function recomputeGoalProgress(goalId: string): Promise<void> {
+  const goal = await selectOne<{ task_total: number }>(
+    `SELECT task_total FROM goals WHERE id = ?1`,
+    [goalId]
+  );
+  if (!goal || goal.task_total <= 0) return;
+
+  const row = await selectOne<{ c: number }>(
+    `SELECT count(*) AS c FROM calendar WHERE goal_id = ?1 AND done = 1`,
+    [goalId]
+  );
+  const done = row?.c ?? 0;
+  const progress = Math.max(
+    0,
+    Math.min(100, Math.round((done / goal.task_total) * 100))
+  );
+  await execute(`UPDATE goals SET progress = ?1, done = ?2 WHERE id = ?3`, [
+    progress,
+    progress >= 100 ? 1 : 0,
+    goalId,
+  ]);
 }
 
 /**

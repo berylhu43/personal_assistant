@@ -26,18 +26,22 @@ export default function Settings({
   }
 
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-ink/40 px-6 backdrop-blur-[2px]">
-      <div className="no-drag rise w-full max-w-sm rounded-2xl border border-ink/10 bg-paper p-6 shadow-lift">
-        <div className="mb-1 flex items-center gap-1.5">
-          <span className="h-1 w-1 rounded-full bg-gold" />
-          <span className="eyebrow">Settings</span>
-        </div>
-        <h3 className="font-serif text-2xl text-ink">Your keys</h3>
-        <p className="mt-1.5 font-sans text-xs leading-relaxed text-ink/55">
+    <div
+      onMouseDown={onClose}
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/70 px-6"
+    >
+      <div
+        onMouseDown={(e) => e.stopPropagation()}
+        style={{ backgroundColor: "#FBF7EF" }}
+        className="no-drag rise w-full max-w-sm rounded-2xl border border-ink/15 p-6 shadow-lift"
+      >
+        <span className="eyebrow">Settings</span>
+        <h3 className="mt-1 font-serif text-2xl text-ink">Your keys</h3>
+        <p className="mt-1.5 font-sans text-xs leading-relaxed text-ink/60">
           Your Anthropic API key is stored locally and never leaves this machine.
         </p>
 
-        <label className="mt-5 block font-mono text-[10px] uppercase tracking-wide text-ink/55">
+        <label className="mt-5 block font-mono text-[10px] uppercase tracking-wide text-ink/60">
           Anthropic API key{" "}
           {hasKey && <span className="text-done">· set</span>}
         </label>
@@ -45,14 +49,15 @@ export default function Settings({
           type="password"
           value={key}
           onChange={(e) => setKey(e.target.value)}
-          placeholder={hasKey ? "•••••••• (enter to replace)" : "sk-ant-…"}
-          className="selectable focus-gold mt-1.5 w-full rounded-lg border border-ink/15 bg-cream/50 px-3 py-2.5 font-mono text-sm text-ink transition"
+          placeholder={hasKey ? "Enter a new key to replace" : "sk-ant-…"}
+          style={{ backgroundColor: "#FFFFFF" }}
+          className="selectable focus-gold mt-1.5 w-full rounded-lg border border-ink/20 px-3 py-2.5 font-mono text-sm text-ink transition"
         />
 
-        <div className="mt-5 flex items-center justify-end gap-3">
+        <div className="mt-6 flex items-center justify-end gap-3">
           <button
             onClick={onClose}
-            className="font-sans text-sm text-ink/50 transition hover:text-ink"
+            className="font-sans text-sm text-ink/55 transition hover:text-ink"
           >
             Close
           </button>
@@ -61,7 +66,7 @@ export default function Settings({
             disabled={!key.trim()}
             className="rounded-full bg-ink px-5 py-2 font-sans text-sm font-medium text-cream shadow-memo transition hover:bg-gold-deep disabled:opacity-40 disabled:hover:bg-ink"
           >
-            {saved ? "✓ Saved" : "Save"}
+            {saved ? "Saved" : "Save"}
           </button>
         </div>
       </div>

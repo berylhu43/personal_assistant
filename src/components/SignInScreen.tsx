@@ -40,9 +40,6 @@ export default function SignInScreen({
     >
       {/* faint oversized seal in the corner */}
       <span className="pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full border border-gold/20" />
-      <span className="pointer-events-none absolute -right-2 top-3 font-serif text-[120px] leading-none text-gold/10 select-none">
-        ✦
-      </span>
 
       <div className="rise" style={{ animationDelay: "40ms" }}>
         <p className="eyebrow">{today}</p>

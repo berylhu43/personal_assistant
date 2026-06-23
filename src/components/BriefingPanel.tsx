@@ -28,9 +28,8 @@ export default function BriefingPanel({
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
 
-  // Collapsible sections.
-  const [briefingOpen, setBriefingOpen] = useState(true);
-  const [inboxOpen, setInboxOpen] = useState(true);
+  // Only the notes list collapses — the summary is always visible.
+  const [notesOpen, setNotesOpen] = useState(true);
 
   const scan = useCallback(async () => {
     setScanning(true);
@@ -74,86 +73,70 @@ export default function BriefingPanel({
   }
 
   return (
-    <div className="relative border-b border-ink/10 bg-gradient-to-b from-paper/70 to-cream/30 px-5 py-5 pl-10">
-      <button
-        onClick={() => setBriefingOpen((o) => !o)}
-        className="mb-2 flex w-full items-center gap-1.5"
-      >
+    <div className="relative bg-gradient-to-b from-paper/70 to-cream/30 px-5 py-5 pl-10">
+      <div className="mb-2 flex items-center gap-1.5">
         <span className="h-1 w-1 rounded-full bg-gold" />
         <span className="eyebrow">Today's Briefing</span>
-        <span
-          className={`ml-auto text-ink/35 transition-transform ${
-            briefingOpen ? "rotate-90" : ""
-          }`}
-        >
-          ›
-        </span>
-      </button>
+      </div>
 
-      {briefingOpen &&
-        (briefing ? (
-          <>
-            <p className="font-serif text-[17px] leading-snug text-ink">
-              {briefing.summary}
-            </p>
-            {briefing.notes.length > 0 && (
-              <ul className="mt-2.5 space-y-1.5">
-                {briefing.notes.map((n, i) => (
-                  <li
-                    key={i}
-                    className="flex gap-2 font-sans text-xs leading-relaxed text-ink/70"
-                  >
-                    <span className="mt-px select-none text-gold-deep">›</span>
-                    {n}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </>
-        ) : (
-          <p className="flex items-center gap-2 font-sans text-xs italic text-ink/45">
-            {loading && (
-              <span className="h-1.5 w-1.5 animate-ping rounded-full bg-gold" />
-            )}
-            {loading
-              ? "Gathering your day…"
-              : "No briefing yet — connect Google to see your day."}
+      {briefing ? (
+        <>
+          {/* Summary — always visible */}
+          <p className="font-serif text-[17px] leading-snug text-ink">
+            {briefing.summary}
           </p>
-        ))}
+          {briefing.notes.length > 0 && (
+            <div className="mt-2.5">
+              {notesOpen && (
+                <ul className="mb-2 space-y-1.5">
+                  {briefing.notes.map((n, i) => (
+                    <li
+                      key={i}
+                      className="flex gap-2 font-sans text-xs leading-relaxed text-ink/70"
+                    >
+                      <span className="mt-px select-none text-ink/35">–</span>
+                      {n}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button
+                onClick={() => setNotesOpen((o) => !o)}
+                className="font-mono text-[10px] uppercase tracking-wide text-ink/45 transition hover:text-gold-deep"
+              >
+                {notesOpen ? "Hide notes" : `Show notes (${briefing.notes.length})`}
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="flex items-center gap-2 font-sans text-xs italic text-ink/45">
+          {loading && (
+            <span className="h-1.5 w-1.5 animate-ping rounded-full bg-gold" />
+          )}
+          {loading
+            ? "Gathering your day…"
+            : "No briefing yet — connect Google to see your day."}
+        </p>
+      )}
 
       {/* Inbox — extracted tasks to confirm */}
-      <div className="mt-5">
+      <div className="mt-6">
         <div className="mb-2 flex items-center justify-between">
-          <button
-            onClick={() => setInboxOpen((o) => !o)}
-            className="flex items-center gap-1.5"
-          >
+          <div className="flex items-center gap-1.5">
             <span className="h-1 w-1 rounded-full bg-gold" />
             <span className="eyebrow">Inbox</span>
-            <span
-              className={`text-ink/35 transition-transform ${
-                inboxOpen ? "rotate-90" : ""
-              }`}
-            >
-              ›
-            </span>
-            {candidates && candidates.length > 0 && (
-              <span className="rounded-full bg-gold/20 px-1.5 font-mono text-[9px] text-gold-deep">
-                {candidates.length}
-              </span>
-            )}
-          </button>
+          </div>
           <button
             onClick={() => void scan()}
             disabled={scanning}
-            className="font-mono text-[10px] lowercase tracking-wide text-ink/40 transition hover:text-gold-deep disabled:opacity-40"
-            title="Re-scan inbox"
+            className="rounded-full border border-ink/15 px-2.5 py-1 font-sans text-xs font-medium text-ink/70 transition hover:border-gold hover:bg-gold/5 hover:text-ink disabled:opacity-50"
           >
-            {scanning ? "scanning…" : "⟳ refresh"}
+            {scanning ? "Scanning…" : "Refresh"}
           </button>
         </div>
 
-        {!inboxOpen ? null : scanning ? (
+        {scanning ? (
           <Empty>Reading your inbox…</Empty>
         ) : error ? (
           <Empty>{error}</Empty>
@@ -164,15 +147,14 @@ export default function BriefingPanel({
             {(candidates ?? []).map((c, i) => (
               <li
                 key={`${c.emailId}-${i}`}
-                className="lift group/task relative rounded-xl border border-ink/10 bg-paper/80 px-3 py-2.5 pr-7 shadow-memo hover:border-gold/50"
+                className="lift relative rounded-xl border border-ink/10 bg-paper/80 px-3 py-2.5 pr-9 shadow-memo hover:border-gold/50"
               >
                 <button
                   onClick={() => dismiss(c)}
                   aria-label="Close task"
-                  title="Close"
-                  className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full text-ink/30 transition hover:bg-ink/5 hover:text-ink"
+                  className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full font-mono text-ink/35 transition hover:bg-ink/5 hover:text-ink"
                 >
-                  ✕
+                  ×
                 </button>
                 <p className="font-sans text-[13px] font-medium leading-snug text-ink">
                   {c.task.title}
@@ -196,7 +178,7 @@ export default function BriefingPanel({
                     onClick={() => void addCandidate(c)}
                     className="rounded-full bg-ink px-3 py-1 font-sans text-[11px] font-medium text-cream transition hover:bg-gold-deep"
                   >
-                    ✓ Add
+                    Add
                   </button>
                 </div>
               </li>

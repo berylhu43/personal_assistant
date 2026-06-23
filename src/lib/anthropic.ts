@@ -22,10 +22,29 @@ export class MissingApiKeyError extends Error {
 export async function chat(
   messages: ChatMessage[],
   systemPrompt: string,
-  maxTokens = 1024
+  maxTokens = 1024,
+  opts?: { webSearch?: boolean }
 ): Promise<string> {
   const apiKey = await getApiKey();
   if (!apiKey) throw new MissingApiKeyError();
+
+  const body: Record<string, unknown> = {
+    model: MODEL,
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages,
+  };
+  // Opt-in server-side web search. When enabled the response interleaves
+  // server_tool_use / web_search_tool_result blocks among the text blocks — we
+  // still return only the concatenated text. Off by default (normal chat is
+  // search-free and cheap).
+  if (opts?.webSearch) {
+    body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+  }
+
+  const dbg = opts?.webSearch;
+  if (dbg)
+    console.log("[plan-debug] chat: sending request, webSearch=true, max_tokens", maxTokens);
 
   const res = await fetch(ENDPOINT, {
     method: "POST",
@@ -35,20 +54,24 @@ export async function chat(
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true"
     },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages,
-    }),
+    body: JSON.stringify(body),
   });
+
+  if (dbg) console.log("[plan-debug] chat: fetch returned, status", res.status);
 
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
+    if (dbg) console.error("[plan-debug] chat: error body", detail.slice(0, 500));
     throw new Error(`Anthropic API error ${res.status}: ${detail.slice(0, 200)}`);
   }
 
   const data = await res.json();
+  if (dbg)
+    console.log(
+      "[plan-debug] chat: content block types",
+      (data.content ?? []).map((b: any) => b.type)
+    );
+  // Multi-block responses are expected (text + tool-use/result). Keep text only.
   return (data.content ?? [])
     .filter((b: any) => b.type === "text")
     .map((b: any) => b.text)

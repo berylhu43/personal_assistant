@@ -28,6 +28,7 @@ Boundary rules:
 - commitments: discrete dated things the user committed to (e.g. "dentist Friday", "submit report Monday"). "time" is optional.
 - Resolve ALL relative time ("tomorrow", "this Friday", "next week") to ABSOLUTE calendar dates using the provided today's date. Never store a relative word.
 - Omit anything uncertain or already obvious. Empty arrays are fine.
+- Titles must be PLAIN TEXT — never include emoji, icons, or decorative symbols.
 
 Reconciliation — IMPORTANT:
 - You will be given the items ALREADY SAVED for this user (goals, commitments, memories). Output ONLY genuinely new items that are not already represented — even if you would phrase them differently.

@@ -4,9 +4,11 @@ import { listen } from "@tauri-apps/api/event";
 
 import * as auth from "./lib/auth";
 import { initApp } from "./lib/init";
-import { getApiKey } from "./lib/store";
+import { getApiKey, type PendingPlan } from "./lib/store";
 import { getTodayEvents, getPendingEmails } from "./lib/google";
 import { getBriefing, getOrGenerateBriefing, generateBriefing } from "./lib/briefing";
+import { generatePlan } from "./lib/planning";
+import { addMessage } from "./lib/chat";
 import type { User, CalendarEvent, PendingEmail, Briefing } from "./lib/types";
 
 import SignInScreen from "./components/SignInScreen";
@@ -37,6 +39,14 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [goalsRefresh, setGoalsRefresh] = useState(0);
   const [calendarRefresh, setCalendarRefresh] = useState(0);
+  // Plan generation lives at App level so collapsing/unmounting the chat panel
+  // can't interrupt it. `planResult` is the latest completed plan (for the
+  // in-chat message + Download control).
+  const [planning, setPlanning] = useState(false);
+  const [planResult, setPlanResult] = useState<{
+    reply: string;
+    goalId: string | null;
+  } | null>(null);
   // Adjustable width of the left memo column when expanded (persisted).
   const [leftWidth, setLeftWidth] = useState<number>(() => {
     const saved = Number(localStorage.getItem("pa.leftWidth"));
@@ -178,6 +188,36 @@ export default function App() {
     await toggleExpanded(false);
   }, [toggleExpanded]);
 
+  // Run a confirmed learning plan from App level so it survives the chat panel
+  // collapsing/unmounting mid-generation. Persists the assistant reply, writes
+  // the goal/tasks/plan, and refreshes the left panel — all regardless of the
+  // expanded/collapsed state.
+  const runPlan = useCallback(async (pending: PendingPlan) => {
+    const u = userRef.current;
+    if (!u) return;
+    setPlanResult(null);
+    setPlanning(true);
+    try {
+      const result = await generatePlan(u.id, pending);
+      await addMessage(u.id, "assistant", result.reply);
+      setPlanResult({ reply: result.reply, goalId: result.ok ? result.goalId ?? null : null });
+      if (result.ok) {
+        setGoalsRefresh((n) => n + 1);
+        setCalendarRefresh((n) => n + 1);
+      }
+    } catch (e) {
+      console.error("[plan-debug] runPlan failed:", e);
+      setPlanResult({
+        reply: `I couldn't build the plan — ${
+          (e as Error)?.message ?? "the request failed"
+        }.`,
+        goalId: null,
+      });
+    } finally {
+      setPlanning(false);
+    }
+  }, []);
+
   const dateStr = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -195,11 +235,10 @@ export default function App() {
           {status === "ready" && (
             <button
               onClick={() => void toggleExpanded(!expanded)}
-              className="no-drag flex h-7 w-7 items-center justify-center rounded-full border border-ink/10 bg-cream/70 text-base leading-none text-ink/55 transition hover:border-gold hover:text-ink"
+              className="no-drag rounded-full border border-ink/10 bg-cream/70 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-ink/55 transition hover:border-gold hover:text-ink"
               aria-label={expanded ? "Collapse" : "Expand"}
-              title={expanded ? "Collapse" : "Expand chat"}
             >
-              {expanded ? "‹" : "›"}
+              {expanded ? "Collapse" : "Expand"}
             </button>
           )}
           <div className="flex flex-col leading-tight">
@@ -209,15 +248,19 @@ export default function App() {
             </span>
           </div>
         </div>
+        {status === "ready" && planning && (
+          <div className="no-drag flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-gold-deep">
+            <span className="h-1.5 w-1.5 animate-ping rounded-full bg-gold" />
+            Building plan…
+          </div>
+        )}
         {status === "ready" && (
           <div className="no-drag flex items-center gap-1.5">
             <button
               onClick={() => setShowSettings(true)}
-              className="flex h-7 w-7 items-center justify-center rounded-full text-ink/45 transition hover:bg-ink/5 hover:text-ink"
-              aria-label="Settings"
-              title="Settings"
+              className="rounded-full px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-ink/45 transition hover:text-ink"
             >
-              ⚙
+              Settings
             </button>
             <button
               onClick={() => void handleSignOut()}
@@ -271,10 +314,14 @@ export default function App() {
                   style={{ animationDelay: "60ms" }}
                 >
                   <span className="h-1 w-1 rounded-full bg-gold" />
-                  <span className="eyebrow">Upcoming</span>
+                  <span className="eyebrow">Upcoming Tasks</span>
                 </div>
                 <div className="rise" style={{ animationDelay: "90ms" }}>
-                  <LocalCalendar userId={user.id} refreshKey={calendarRefresh} />
+                  <LocalCalendar
+                    userId={user.id}
+                    refreshKey={calendarRefresh}
+                    onTaskToggled={() => setGoalsRefresh((n) => n + 1)}
+                  />
                 </div>
 
                 <div
@@ -308,6 +355,9 @@ export default function App() {
                   userId={user.id}
                   events={events}
                   emails={emails}
+                  planning={planning}
+                  planResult={planResult}
+                  onPlanConfirmed={(pending) => void runPlan(pending)}
                   onGoalCreated={() => setGoalsRefresh((n) => n + 1)}
                   onCommitmentCreated={() => setCalendarRefresh((n) => n + 1)}
                   onNeedApiKey={() => setShowSettings(true)}

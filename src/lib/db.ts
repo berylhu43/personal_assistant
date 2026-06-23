@@ -37,3 +37,13 @@ export async function execute(sql: string, params: unknown[] = []) {
 export function uid(): string {
   return crypto.randomUUID();
 }
+
+/**
+ * Remove emoji / pictographic icons from a string (keeps normal text, arrows,
+ * and punctuation). Used to keep goal/task titles icon-free.
+ */
+export function stripEmoji(s: string): string {
+  const emoji =
+    /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u{1F3FB}-\u{1F3FF}️‍]/gu;
+  return s.replace(emoji, "").replace(/\s{2,}/g, " ").trim();
+}

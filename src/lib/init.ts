@@ -1,8 +1,10 @@
-import { select, execute } from "./db";
+import { select, execute, stripEmoji } from "./db";
 import {
   getLocalUserId,
   isDataConsolidated,
   setDataConsolidated,
+  areTitlesCleaned,
+  setTitlesCleaned,
 } from "./store";
 import { dedupeMemories, purgeRelativeTimeMemories } from "./memory";
 import { hasMessages, clearMessages } from "./chat";
@@ -76,6 +78,26 @@ export async function initApp(): Promise<string> {
   }
   // One-time purge of stale time-relative memories (self-guarded).
   await purgeRelativeTimeMemories(localId);
+
+  // One-time strip of emoji/icons from existing goal & task titles.
+  if (!(await areTitlesCleaned())) {
+    for (const table of ["goals", "calendar"]) {
+      const rows = await select<{ id: string; title: string }>(
+        `SELECT id, title FROM ${table} WHERE user_id = ?1`,
+        [localId]
+      );
+      for (const r of rows) {
+        const clean = stripEmoji(r.title);
+        if (clean !== r.title) {
+          await execute(`UPDATE ${table} SET title = ?1 WHERE id = ?2`, [
+            clean,
+            r.id,
+          ]);
+        }
+      }
+    }
+    await setTitlesCleaned();
+  }
 
   // A non-empty messages table at launch means a previous session was quit
   // without closing. Distill it, then clear. Best-effort: if distillation

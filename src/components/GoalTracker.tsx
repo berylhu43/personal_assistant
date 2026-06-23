@@ -3,11 +3,17 @@ import {
   listGoals,
   createGoal,
   setGoalProgress,
-  setGoalPlan,
   setGoalDone,
   deleteGoal,
 } from "../lib/goals";
-import type { Goal } from "../lib/types";
+import { getPlanByGoal } from "../lib/plans";
+import { openExternal } from "../lib/openExternal";
+import type { Goal, PlanDay } from "../lib/types";
+
+/** A goal has expandable detail if it carries a weekly plan or linked tasks. */
+function hasDetails(g: Goal): boolean {
+  return (g.plan != null && g.plan.length > 0) || g.taskTotal > 0;
+}
 
 /** "2026-07-01" → "Jul 1". */
 function formatTarget(date: string): string {
@@ -26,6 +32,23 @@ export default function GoalTracker({
   const [goals, setGoals] = useState<Goal[]>([]);
   const [title, setTitle] = useState("");
   const [openPlan, setOpenPlan] = useState<string | null>(null);
+  // Cache of loaded plan documents (learning-plan goals) by goal id.
+  const [planDocs, setPlanDocs] = useState<Record<string, PlanDay[]>>({});
+
+  // Toggle a goal's detail, lazily loading its saved plan document if any.
+  async function toggleOpen(goal: Goal) {
+    const willOpen = openPlan !== goal.id;
+    setOpenPlan(willOpen ? goal.id : null);
+    if (willOpen && planDocs[goal.id] === undefined && goal.taskTotal > 0) {
+      try {
+        const row = await getPlanByGoal(goal.id);
+        const days = row ? (JSON.parse(row.content) as PlanDay[]) : [];
+        setPlanDocs((m) => ({ ...m, [goal.id]: Array.isArray(days) ? days : [] }));
+      } catch {
+        setPlanDocs((m) => ({ ...m, [goal.id]: [] }));
+      }
+    }
+  }
 
   const refresh = useCallback(() => {
     listGoals(userId).then(setGoals).catch(() => setGoals([]));
@@ -62,16 +85,6 @@ export default function GoalTracker({
     refresh();
   }
 
-  // Check off a plan step → progress bar reflects the completed fraction.
-  async function togglePlanItem(goal: Goal, week: number) {
-    if (!goal.plan) return;
-    const newPlan = goal.plan.map((p) =>
-      p.week === week ? { ...p, done: !p.done } : p
-    );
-    await setGoalPlan(goal.id, newPlan);
-    refresh();
-  }
-
   return (
     <div>
       <ul className="space-y-3.5">
@@ -81,40 +94,27 @@ export default function GoalTracker({
               <button
                 onClick={() => toggle(goal)}
                 aria-label={goal.done ? "Mark not done" : "Mark done"}
-                className={`flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[6px] border transition ${
+                className={`h-[18px] w-[18px] shrink-0 rounded-[6px] border transition ${
                   goal.done
-                    ? "border-done bg-done text-cream"
+                    ? "border-done bg-done"
                     : "border-ink/25 hover:border-gold"
                 }`}
-              >
-                {goal.done && (
-                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                    <path
-                      d="M2.5 6.5L5 9l4.5-5.5"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
-              </button>
+              />
               <span
+                onClick={() => {
+                  if (hasDetails(goal)) void toggleOpen(goal);
+                }}
+                title={hasDetails(goal) ? "Click to view the plan" : undefined}
                 className={`flex-1 truncate font-sans text-sm ${
                   goal.done ? "text-ink/40 line-through" : "text-ink"
-                }`}
+                } ${hasDetails(goal) ? "cursor-pointer hover:text-gold-deep" : ""}`}
               >
                 {goal.title}
               </span>
               {goal.plan && goal.plan.length > 0 && (
-                <button
-                  onClick={() =>
-                    setOpenPlan(openPlan === goal.id ? null : goal.id)
-                  }
-                  className="shrink-0 rounded-full bg-gold/15 px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-gold-deep transition hover:bg-gold/30"
-                >
+                <span className="shrink-0 rounded-full bg-gold/15 px-1.5 py-px font-mono text-[9px] uppercase tracking-wide text-gold-deep">
                   {goal.plan.length}wk
-                </button>
+                </span>
               )}
               {goal.targetDate && (
                 <span className="shrink-0 font-mono text-[10px] text-ink/40">
@@ -127,64 +127,113 @@ export default function GoalTracker({
               <button
                 onClick={() => remove(goal.id)}
                 aria-label="Remove goal"
-                className="text-ink/25 opacity-0 transition group-hover:opacity-100 hover:text-ink/60"
+                className="font-mono text-ink/30 opacity-0 transition group-hover:opacity-100 hover:text-ink/60"
               >
                 ×
               </button>
             </div>
 
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={goal.progress}
-              onChange={(e) => progress(goal, Number(e.target.value))}
-              className="goal-range mt-2 h-1.5 w-full cursor-pointer appearance-none rounded-full"
-              style={{
-                background: `linear-gradient(to right, ${
-                  goal.done ? "#1D9E75" : "#D4A853"
-                } ${goal.progress}%, rgba(28,28,30,0.1) ${goal.progress}%)`,
-              }}
-            />
+            {goal.taskTotal > 0 ? (
+              // Read-only: progress is computed from completed linked tasks.
+              <div
+                className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-ink/10"
+                title={`${goal.progress}% — from completed daily tasks`}
+              >
+                <div
+                  className="h-full rounded-full transition-[width] duration-300"
+                  style={{
+                    width: `${goal.progress}%`,
+                    backgroundColor: goal.done ? "#1D9E75" : "#D4A853",
+                  }}
+                />
+              </div>
+            ) : (
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={goal.progress}
+                onChange={(e) => progress(goal, Number(e.target.value))}
+                className="goal-range mt-2 h-1.5 w-full cursor-pointer appearance-none rounded-full"
+                style={{
+                  background: `linear-gradient(to right, ${
+                    goal.done ? "#1D9E75" : "#D4A853"
+                  } ${goal.progress}%, rgba(28,28,30,0.1) ${goal.progress}%)`,
+                }}
+              />
+            )}
 
-            {openPlan === goal.id && goal.plan && (
-              <ul className="mt-2 space-y-1.5 border-l border-gold/40 pl-3">
-                {goal.plan.map((p) => (
-                  <li key={p.week} className="flex items-start gap-2">
-                    <button
-                      onClick={() => togglePlanItem(goal, p.week)}
-                      aria-label={p.done ? "Mark step undone" : "Mark step done"}
-                      className={`mt-0.5 flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[4px] border transition ${
-                        p.done
-                          ? "border-done bg-done text-cream"
-                          : "border-ink/25 hover:border-gold"
-                      }`}
-                    >
-                      {p.done && (
-                        <svg width="9" height="9" viewBox="0 0 12 12" fill="none">
-                          <path
-                            d="M2.5 6.5L5 9l4.5-5.5"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                    </button>
-                    <span
-                      className={`font-sans text-xs leading-snug ${
-                        p.done ? "text-ink/40 line-through" : "text-ink/65"
-                      }`}
-                    >
-                      <span className="font-mono text-[10px] uppercase text-gold-deep">
-                        W{p.week}
-                      </span>{" "}
-                      {p.focus}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+            {/* Expanded detail */}
+            {openPlan === goal.id && (
+              <div className="mt-2 border-l border-gold/40 pl-3">
+                {/* Weekly plan (chat goals with a plan) */}
+                {goal.plan && goal.plan.length > 0 && (
+                  <ul className="space-y-1">
+                    {goal.plan.map((p) => (
+                      <li
+                        key={p.week}
+                        className="font-sans text-xs leading-snug text-ink/65"
+                      >
+                        <span className="font-mono text-[10px] uppercase text-gold-deep">
+                          W{p.week}
+                        </span>{" "}
+                        {p.focus}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* Saved learning-plan document (day-by-day with resources) */}
+                {planDocs[goal.id]?.length ? (
+                  <ul className="space-y-2">
+                    {planDocs[goal.id].map((d, i) => (
+                      <li key={i} className="leading-snug">
+                        <p className="font-sans text-xs text-ink/80">
+                          <span className="font-mono text-[10px] text-gold-deep">
+                            {d.date}
+                          </span>{" "}
+                          {d.topic}
+                        </p>
+                        {d.task && (
+                          <p className="font-sans text-[11px] text-ink/55">
+                            {d.task}
+                          </p>
+                        )}
+                        {d.resources?.length ? (
+                          <ul className="mt-0.5 space-y-1">
+                            {d.resources.map((r, j) => (
+                              <li
+                                key={j}
+                                className="selectable font-mono text-[10px] leading-snug text-ink/55"
+                              >
+                                {r.title} —{" "}
+                                <button
+                                  onClick={() => void openExternal(r.url)}
+                                  className="break-all text-left text-gold-deep underline-offset-2 hover:underline"
+                                  title="Open in browser"
+                                >
+                                  {r.url}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                {/* Linked tasks but no document/weekly plan */}
+                {!(goal.plan && goal.plan.length > 0) &&
+                  !planDocs[goal.id]?.length &&
+                  goal.taskTotal > 0 && (
+                    <p className="font-sans text-[11px] italic text-ink/40">
+                      {planDocs[goal.id] === undefined
+                        ? "Loading…"
+                        : "Daily tasks appear in Upcoming as their dates arrive."}
+                    </p>
+                  )}
+              </div>
             )}
           </li>
         ))}
@@ -204,9 +253,9 @@ export default function GoalTracker({
         />
         <button
           type="submit"
-          className="shrink-0 rounded-full bg-ink/5 px-2.5 py-1 font-mono text-[11px] font-bold uppercase tracking-wide text-gold-deep transition hover:bg-gold hover:text-cream"
+          className="shrink-0 rounded-full bg-ink/5 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wide text-gold-deep transition hover:bg-gold hover:text-cream"
         >
-          + Add
+          Add
         </button>
       </form>
     </div>

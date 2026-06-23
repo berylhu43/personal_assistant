@@ -37,7 +37,8 @@ Rules:
 - date: OPTIONAL — include only if the email implies a due/needed date. Resolve relative dates ("by Friday", "tomorrow") to ABSOLUTE dates using today's date. Omit if there is no clear date.
 - kind: "commitment" for a dated/discrete to-do (the default), "goal" for a larger ongoing objective.
 - Do NOT suggest anything already in the ALREADY SAVED list (same underlying thing, regardless of wording or exact date).
-- When unsure whether something is a real task, OMIT it. An empty array is fine.`;
+- When unsure whether something is a real task, OMIT it. An empty array is fine.
+- The "title" must be PLAIN TEXT — never include emoji, icons, or decorative symbols.`;
 
 function tryParse(raw: string): any {
   const match = raw.match(/\{[\s\S]*\}/);

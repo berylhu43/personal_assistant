@@ -175,6 +175,38 @@ CREATE TABLE IF NOT EXISTS calendar (
 ALTER TABLE goals ADD COLUMN target_date TEXT;
 "#,
         },
+        Migration {
+            version: 4,
+            description: "link daily tasks to goals",
+            kind: MigrationKind::Up,
+            sql: r#"
+ALTER TABLE goals ADD COLUMN task_total INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE calendar ADD COLUMN goal_id TEXT;
+"#,
+        },
+        Migration {
+            version: 5,
+            description: "weekly-granularity goals",
+            kind: MigrationKind::Up,
+            sql: r#"
+ALTER TABLE goals ADD COLUMN granularity TEXT NOT NULL DEFAULT 'daily';
+ALTER TABLE calendar ADD COLUMN span TEXT;
+"#,
+        },
+        Migration {
+            version: 6,
+            description: "learning plan documents",
+            kind: MigrationKind::Up,
+            sql: r#"
+CREATE TABLE IF NOT EXISTS plans (
+  id TEXT PRIMARY KEY,
+  goal_id TEXT REFERENCES goals(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"#,
+        },
     ]
 }
 
@@ -194,6 +226,9 @@ pub fn run() {
         )
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_google_auth::init())
         .manage(AppState {
             expanded: AtomicBool::new(false),

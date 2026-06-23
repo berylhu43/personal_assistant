@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { runChatTurn, clearMessages } from "../lib/chat";
 import { distillConversation } from "../lib/distill";
+import { downloadPlan } from "../lib/planExport";
 import { MissingApiKeyError } from "../lib/anthropic";
+import type { PendingPlan } from "../lib/store";
 import type { CalendarEvent, PendingEmail, ChatMessage } from "../lib/types";
 
 interface UIMessage extends ChatMessage {
@@ -12,6 +14,9 @@ export default function ChatPanel({
   userId,
   events,
   emails,
+  planning,
+  planResult,
+  onPlanConfirmed,
   onGoalCreated,
   onCommitmentCreated,
   onNeedApiKey,
@@ -20,6 +25,9 @@ export default function ChatPanel({
   userId: string;
   events: CalendarEvent[];
   emails: PendingEmail[];
+  planning: boolean;
+  planResult: { reply: string; goalId: string | null } | null;
+  onPlanConfirmed: (pending: PendingPlan) => void;
   onGoalCreated: () => void;
   onCommitmentCreated: () => void;
   onNeedApiKey: () => void;
@@ -38,7 +46,7 @@ export default function ChatPanel({
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages, sending]);
+  }, [messages, sending, planning, planResult]);
 
   async function send() {
     const text = input.trim();
@@ -52,6 +60,12 @@ export default function ChatPanel({
 
     try {
       const result = await runChatTurn(userId, text, { events, emails });
+      // A learning-plan confirmation: hand off to App (survives collapse). The
+      // App-driven indicator + result/Download will render below.
+      if (result.planConfirmed) {
+        onPlanConfirmed(result.planConfirmed);
+        return;
+      }
       setMessages((prev) => [
         ...prev,
         { id: crypto.randomUUID(), role: "assistant", content: result.reply },
@@ -130,8 +144,7 @@ export default function ChatPanel({
         className="slim-scroll selectable flex-1 space-y-3 overflow-y-auto px-5 py-5"
       >
         {messages.length === 0 && !sending && (
-          <div className="mt-10 flex flex-col items-center gap-2 px-6 text-center">
-            <span className="font-serif text-2xl text-gold/40">“</span>
+          <div className="mt-10 px-6 text-center">
             <p className="font-sans text-sm italic leading-relaxed text-ink/35">
               Tell me a goal or plan — e.g. “I want to learn AI agents this
               month.”
@@ -163,6 +176,35 @@ export default function ChatPanel({
                   style={{ animationDelay: `${i * 0.15}s` }}
                 />
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* App-driven plan generation (survives collapse/expand) */}
+        {planning && (
+          <div className="flex justify-start">
+            <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-gold/40 bg-gold/10 px-3.5 py-2 font-sans text-xs text-ink/70 shadow-memo">
+              <span className="h-1.5 w-1.5 animate-ping rounded-full bg-gold" />
+              Searching and building your plan…
+            </div>
+          </div>
+        )}
+
+        {/* Completed plan: message + Download control */}
+        {!planning && planResult && (
+          <div className="flex justify-start">
+            <div className="max-w-[88%] rounded-2xl rounded-bl-md border border-ink/10 bg-paper/80 px-3.5 py-2 shadow-memo">
+              <p className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink">
+                {planResult.reply}
+              </p>
+              {planResult.goalId && (
+                <button
+                  onClick={() => void downloadPlan(planResult.goalId!)}
+                  className="mt-2 rounded-full bg-ink px-3 py-1 font-sans text-[11px] font-medium text-cream transition hover:bg-gold-deep"
+                >
+                  Download plan
+                </button>
+              )}
             </div>
           </div>
         )}

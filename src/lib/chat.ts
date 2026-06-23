@@ -1,7 +1,14 @@
 import { select, execute, uid } from "./db";
 import { chat } from "./anthropic";
 import { createEvent } from "./google";
-import { saveGoal, listGoals, setGoalDone, deleteGoal } from "./goals";
+import {
+  saveGoal,
+  listGoals,
+  setGoalDone,
+  setGoalTaskTotal,
+  setGoalGranularity,
+  deleteGoal,
+} from "./goals";
 import {
   createCommitment,
   listUpcoming,
@@ -10,6 +17,12 @@ import {
 } from "./localCalendar";
 import { addMemory } from "./memory";
 import { listMemories } from "./memory";
+import {
+  getPendingPlan,
+  setPendingPlan,
+  clearPendingPlan,
+  type PendingPlan,
+} from "./store";
 import type {
   ChatMessage,
   MessageRow,
@@ -171,10 +184,27 @@ You can take actions by emitting fenced JSON blocks anywhere in your reply. The 
 
 CRITICAL — explicit only: emit a block ONLY for an action the user EXPLICITLY requests in their current message (e.g. "add X to my todos", "remind me to buy milk Saturday", "put this on my Google Calendar"). Do NOT opportunistically save things merely mentioned in passing — durable info is captured automatically when the conversation ends, so there is no need to record it mid-chat. When in doubt, emit nothing and just reply.
 
-1. Save a goal to the user's todo list (with an optional weekly plan):
-\`\`\`goal
-{ "title": "...", "plan": [ { "week": 1, "focus": "..." } ] }
+TITLES: all titles (goals, commitments, events) must be PLAIN TEXT — never include emoji, icons, or decorative symbols.
+
+LEARNING PLANS — confirm first, never build inline: If the user asks for a MULTI-DAY learning or study plan (e.g. "set me daily tasks to learn X by <date>", "make a study plan", "build a learning plan"), do NOT generate it inline and do NOT emit a goal block. Instead reply with ONE brief confirmation question — e.g. "Want me to search for resources and build a day-by-day plan to <date>?" — and emit a \`plan-request\` block, then stop:
+\`\`\`plan-request
+{ "topic": "...", "targetDate": "YYYY-MM-DD" }
 \`\`\`
+\`targetDate\` is optional (omit if the user gave no deadline). The app runs the dedicated web-search + planning path only after the user confirms — so do not also emit goal/commitment blocks during this confirmation step.
+
+1. Save a goal to the user's todo list:
+\`\`\`goal
+{ "title": "...", "plan": [ { "week": 1, "focus": "..." } ],
+  "targetDate": "YYYY-MM-DD",
+  "dailyTasks":  [ { "date": "YYYY-MM-DD", "title": "..." } ]
+  // OR (never both):
+  "weeklyTasks": [ { "weekStart": "YYYY-MM-DD (a Monday)", "title": "..." } ] }
+\`\`\`
+\`plan\`, \`targetDate\`, \`dailyTasks\`, and \`weeklyTasks\` are all optional.
+When the user asks to break a goal into a plan, emit a SINGLE goal block (with \`targetDate\`) and ONLY ONE of these arrays — YOU plan what each unit's task actually is (e.g. specific page ranges, chapters, or topics):
+- If they ask for a DAILY plan ("daily", "each day", "day by day"), use \`dailyTasks\`, one entry per day, with absolute dates resolved against today.
+- If they ask for a WEEKLY plan ("weekly", "每周", "by week"), use \`weeklyTasks\`, one entry per week, where \`weekStart\` is that week's Monday (weeks run Monday–Sunday) resolved against today.
+Do NOT also emit separate \`commitment\` blocks for these; the tasks belong inside the goal block so they link to the goal and drive its progress.
 
 2. Remember a durable fact/preference about the user:
 \`\`\`remember
@@ -188,7 +218,7 @@ Rules for \`remember\` — follow strictly:
 \`\`\`commitment
 { "title": "...", "date": "YYYY-MM-DD", "time": "HH:mm", "note": "..." }
 \`\`\`
-Use an ABSOLUTE date (resolve "tomorrow"/"Friday" against today's date above). "time" and "note" are optional. This is the default for reminders and dated to-dos.
+Use an ABSOLUTE date (resolve "tomorrow"/"Friday" against today's date above). "time" and "note" are optional. Use this for standalone one-off reminders NOT tied to a goal. For per-day tasks that belong to a goal, use the goal block's \`dailyTasks\` instead.
 
 4. Add an event to the user's GOOGLE Calendar — ONLY when the user explicitly asks to put something on their Google Calendar:
 \`\`\`add-event
@@ -229,39 +259,76 @@ interface ParsedCommitment {
   time?: string;
 }
 
+interface ParsedDailyTask {
+  date: string;
+  title: string;
+}
+
+interface ParsedWeeklyTask {
+  weekStart: string;
+  title: string;
+}
+
+interface ParsedGoal {
+  title: string;
+  plan?: WeeklyPlanItem[];
+  targetDate?: string;
+  dailyTasks?: ParsedDailyTask[];
+  weeklyTasks?: ParsedWeeklyTask[];
+}
+
 interface ParsedActions {
   clean: string;
   events: NewEvent[];
-  goals: { title: string; plan?: WeeklyPlanItem[] }[];
+  goals: ParsedGoal[];
   memories: { kind: MemoryKind; content: string }[];
   commitments: ParsedCommitment[];
   completeGoals: string[];
   deleteGoals: string[];
   completeCommitments: string[];
   deleteCommitments: string[];
+  planRequest?: { topic: string; targetDate?: string };
 }
 
 const BLOCK_RE =
-  /```(add-event|goal|remember|commitment|complete-goal|delete-goal|complete-commitment|delete-commitment)\s*([\s\S]*?)```/g;
+  /```(add-event|goal|remember|commitment|complete-goal|delete-goal|complete-commitment|delete-commitment|plan-request)\s*([\s\S]*?)```/g;
 
 export function parseBlocks(raw: string): ParsedActions {
   const events: NewEvent[] = [];
-  const goals: { title: string; plan?: WeeklyPlanItem[] }[] = [];
+  const goals: ParsedGoal[] = [];
   const memories: { kind: MemoryKind; content: string }[] = [];
   const commitments: ParsedCommitment[] = [];
   const completeGoals: string[] = [];
   const deleteGoals: string[] = [];
   const completeCommitments: string[] = [];
   const deleteCommitments: string[] = [];
+  let planRequest: { topic: string; targetDate?: string } | undefined;
 
   let match: RegExpExecArray | null;
   while ((match = BLOCK_RE.exec(raw)) !== null) {
     const [, kind, body] = match;
     try {
       const json = JSON.parse(body.trim());
-      if (kind === "add-event" && json.title && json.date) events.push(json);
+      if (kind === "plan-request" && json.topic)
+        planRequest = {
+          topic: String(json.topic),
+          targetDate:
+            typeof json.targetDate === "string" ? json.targetDate : undefined,
+        };
+      else if (kind === "add-event" && json.title && json.date) events.push(json);
       else if (kind === "goal" && json.title)
-        goals.push({ title: json.title, plan: json.plan });
+        goals.push({
+          title: json.title,
+          plan: json.plan,
+          targetDate:
+            typeof json.targetDate === "string" ? json.targetDate : undefined,
+          dailyTasks: Array.isArray(json.dailyTasks)
+            ? json.dailyTasks
+            : undefined,
+          weeklyTasks: Array.isArray(json.weeklyTasks)
+            ? json.weeklyTasks
+            : undefined,
+        });
       else if (kind === "remember" && json.content)
         memories.push({ kind: json.kind ?? "fact", content: json.content });
       else if (kind === "commitment" && json.title && json.date)
@@ -288,16 +355,29 @@ export function parseBlocks(raw: string): ParsedActions {
     deleteGoals,
     completeCommitments,
     deleteCommitments,
+    planRequest,
   };
 }
 
 // ---- one chat turn ----
+
+/** Loose affirmative detection for confirming a pending learning plan. */
+function isAffirmative(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return /^(y|yes+|yeah|yep|yup|sure|ok(ay)?|do it|go( ahead)?|please( do)?|sounds good|schedule( it)?|build it|let'?s do it|confirm(ed)?|go for it)\b/.test(
+    t
+  ) || /好|是的?|可以|安排|确定|没问题|搞定/.test(t);
+}
 
 export interface ChatTurnResult {
   reply: string;
   createdGoal: boolean;
   createdEvent: boolean;
   createdCommitment: boolean;
+  // Set when the user confirmed a learning plan. The caller runs the plan from
+  // a layer that survives collapse/unmount (see App.runPlan) — runChatTurn does
+  // NOT generate it inline.
+  planConfirmed?: PendingPlan;
 }
 
 /**
@@ -321,8 +401,53 @@ async function applyActions(
     }
   }
   for (const g of p.goals) {
-    await saveGoal({ userId, title: g.title, plan: g.plan ?? null });
+    const goalId = await saveGoal({
+      userId,
+      title: g.title,
+      plan: g.plan ?? null,
+      targetDate: g.targetDate ?? null,
+    });
     createdGoal = true;
+
+    // Model-planned tasks linked to this goal — weekly OR daily, never both.
+    const weekly = (g.weeklyTasks ?? []).filter(
+      (t) => t && /^\d{4}-\d{2}-\d{2}$/.test(t.weekStart) && t.title
+    );
+    const daily = (g.dailyTasks ?? []).filter(
+      (t) => t && /^\d{4}-\d{2}-\d{2}$/.test(t.date) && t.title
+    );
+
+    if (weekly.length > 0) {
+      await setGoalGranularity(goalId, "weekly");
+      for (const t of weekly) {
+        await createCommitment({
+          userId,
+          title: t.title,
+          date: t.weekStart,
+          time: null,
+          source: "goal",
+          goalId,
+          span: "week",
+        });
+      }
+      await setGoalTaskTotal(goalId, weekly.length);
+      createdCommitment = true;
+    } else if (daily.length > 0) {
+      await setGoalGranularity(goalId, "daily");
+      for (const t of daily) {
+        await createCommitment({
+          userId,
+          title: t.title,
+          date: t.date,
+          time: null,
+          source: "goal",
+          goalId,
+          span: null,
+        });
+      }
+      await setGoalTaskTotal(goalId, daily.length);
+      createdCommitment = true;
+    }
   }
   for (const m of p.memories) {
     await addMemory({ userId, kind: m.kind, content: m.content });
@@ -369,6 +494,25 @@ export async function runChatTurn(
 ): Promise<ChatTurnResult> {
   await addMessage(userId, "user", userText);
 
+  // If the previous assistant turn asked to confirm a learning plan, a
+  // confirmation hands off to App.runPlan (which survives collapse). We do NOT
+  // generate here — just signal the caller with the pending request.
+  const pending = await getPendingPlan();
+  if (pending) {
+    await clearPendingPlan();
+    if (isAffirmative(userText)) {
+      console.log("[plan-debug] confirmation detected → hand off to App", pending);
+      return {
+        reply: "",
+        createdGoal: false,
+        createdEvent: false,
+        createdCommitment: false,
+        planConfirmed: pending,
+      };
+    }
+    // Not a confirmation — fall through to a normal chat turn.
+  }
+
   const [memories, goals, commitments, history] = await Promise.all([
     listMemories(userId),
     listGoals(userId).then((gs) => gs.filter((g) => !g.done)),
@@ -390,6 +534,11 @@ export async function runChatTurn(
     userId,
     parsed
   );
+
+  // Remember a pending plan request so the user's next-turn confirmation runs it.
+  if (parsed.planRequest) {
+    await setPendingPlan(parsed.planRequest);
+  }
 
   const visible = parsed.clean || "Done.";
   await addMessage(userId, "assistant", visible);
