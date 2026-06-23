@@ -57,6 +57,18 @@ export default function ChatPanel({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [closing, setClosing] = useState(false);
+  // A file staged for sending — the user can add a supplemental note before send.
+  const [pendingFile, setPendingFile] = useState<{
+    path: string;
+    name: string;
+  } | null>(null);
+  // A document whose dates we couldn't resolve — we asked the user for the
+  // missing info (e.g. term start), and their next message answers it so we can
+  // re-extract without re-reading the file.
+  const [pendingDoc, setPendingDoc] = useState<{
+    name: string;
+    text: string;
+  } | null>(null);
   // Assignment candidates extracted from an uploaded document, awaiting confirm.
   const [fileItems, setFileItems] = useState<AssignmentCandidate[]>([]);
   const [fileCourse, setFileCourse] = useState<string | null>(null);
@@ -71,8 +83,21 @@ export default function ChatPanel({
   }, [messages, sending, planning, planResult, fileItems, attaching]);
 
   async function send() {
+    if (sending || attaching) return;
     const text = input.trim();
-    if (!text || sending) return;
+    // A staged file takes priority: extract from it, using any typed text as
+    // supplemental context. Text alone is fine; a file alone is fine too.
+    if (pendingFile) {
+      await sendWithFile(text);
+      return;
+    }
+    // The user is answering our question about a document's missing dates.
+    if (pendingDoc) {
+      if (!text) return;
+      await answerDocClarification(text);
+      return;
+    }
+    if (!text) return;
     setInput("");
     setMessages((prev) => [
       ...prev,
@@ -111,8 +136,8 @@ export default function ChatPanel({
     }
   }
 
-  // Attach a document (syllabus etc.), extract assignment candidates, and surface
-  // them as confirm-to-add cards. Nothing is written until the user taps Add.
+  // Stage a document for sending. The user can then type a supplemental note
+  // (e.g. the term start date, or "only problem sets") before tapping Send.
   async function attachFile() {
     if (attaching || sending) return;
     let path: string | null = null;
@@ -123,51 +148,107 @@ export default function ChatPanel({
       return;
     }
     if (!path) return;
-
     const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
+    setPendingFile({ path, name });
+  }
+
+  function addAssistant(content: string) {
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: "assistant", content },
+    ]);
+  }
+
+  // Run extraction on already-read document text and react to the result:
+  //  - needsInfo → ask the user (keep the doc staged for their answer)
+  //  - items     → show confirm cards
+  //  - empty     → say nothing was found
+  // Throws on API/parse errors — callers handle messaging.
+  async function handleExtraction(
+    name: string,
+    docText: string,
+    supplement: string
+  ) {
+    const { course, items, needsInfo, question } = await extractAssignments(
+      docText,
+      supplement || undefined
+    );
+
+    if (needsInfo) {
+      // Remember the doc text so the user's next message re-extracts it.
+      setPendingDoc({ name, text: docText });
+      addAssistant(
+        question ??
+          `I couldn't confidently work out the due dates in "${name}" — the schedule looks week-based but I don't have a term start date. What date does Week 1 (or the term) begin? I'll calculate the rest.`
+      );
+      return;
+    }
+
+    setPendingDoc(null);
+    if (items.length === 0) {
+      addAssistant(
+        "I read that file but couldn't find any assignments with due dates."
+      );
+      return;
+    }
+    setFileCourse(course);
+    setFileItems(items);
+    const label = course ? ` for ${course}` : "";
+    addAssistant(
+      `Found ${items.length} item${
+        items.length > 1 ? "s" : ""
+      }${label} with due dates — confirm the ones to add:`
+    );
+  }
+
+  // Send a staged file: show it (plus any typed note) in the thread, read its
+  // text, and extract candidates. Nothing is written until the user taps Add.
+  async function sendWithFile(supplement: string) {
+    const file = pendingFile;
+    if (!file) return;
+    setInput("");
+    setPendingFile(null);
+    setPendingDoc(null);
     setAttaching(true);
     setMessages((prev) => [
       ...prev,
-      { id: crypto.randomUUID(), role: "user", content: `📎 ${name}` },
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        content: `📎 ${file.name}${supplement ? `\n${supplement}` : ""}`,
+      },
     ]);
 
     try {
-      const { text } = await extractText(path);
-      const { course, items } = await extractAssignments(text);
-      if (items.length === 0) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content:
-              "I read that file but couldn't find any assignments with due dates.",
-          },
-        ]);
-      } else {
-        setFileCourse(course);
-        setFileItems(items);
-        const label = course ? ` for ${course}` : "";
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: `Found ${items.length} item${
-              items.length > 1 ? "s" : ""
-            }${label} with due dates — confirm the ones to add:`,
-          },
-        ]);
-      }
+      const { name, text } = await extractText(file.path);
+      await handleExtraction(name, text, supplement);
     } catch (e) {
       console.error("file extraction failed:", e);
       if (e instanceof MissingApiKeyError) onNeedApiKey();
-      const content =
-        e instanceof FileExtractError ? e.message : friendlyError(e);
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "assistant", content },
-      ]);
+      addAssistant(e instanceof FileExtractError ? e.message : friendlyError(e));
+    } finally {
+      setAttaching(false);
+    }
+  }
+
+  // The user answered our question about a document's missing dates — re-extract
+  // the same text with their answer as context (no need to re-read the file).
+  async function answerDocClarification(answer: string) {
+    const doc = pendingDoc;
+    if (!doc) return;
+    setInput("");
+    setAttaching(true);
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: "user", content: answer },
+    ]);
+
+    try {
+      await handleExtraction(doc.name, doc.text, answer);
+    } catch (e) {
+      console.error("file re-extraction failed:", e);
+      if (e instanceof MissingApiKeyError) onNeedApiKey();
+      addAssistant(e instanceof FileExtractError ? e.message : friendlyError(e));
     } finally {
       setAttaching(false);
     }
@@ -210,6 +291,8 @@ export default function ChatPanel({
     setInput("");
     setFileItems([]);
     setFileCourse(null);
+    setPendingFile(null);
+    setPendingDoc(null);
     setClosing(false);
     onClose();
   }
@@ -351,6 +434,35 @@ export default function ChatPanel({
       </div>
 
       <div className="no-drag border-t border-ink/10 bg-paper/50 px-4 py-3">
+        {pendingFile && (
+          <div className="mb-2 flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/10 px-2.5 py-1.5">
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              className="shrink-0 text-gold-deep"
+            >
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+            <span className="min-w-0 flex-1 truncate font-sans text-xs text-ink/70">
+              {pendingFile.name}
+            </span>
+            <button
+              onClick={() => setPendingFile(null)}
+              disabled={attaching}
+              aria-label="Remove attachment"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full font-mono text-ink/40 transition hover:bg-ink/5 hover:text-ink disabled:opacity-40"
+            >
+              ×
+            </button>
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <button
             onClick={() => void attachFile()}
@@ -384,12 +496,18 @@ export default function ChatPanel({
               }
             }}
             rows={1}
-            placeholder="Message…"
+            placeholder={
+              pendingFile
+                ? "Add a note about this file (optional)…"
+                : pendingDoc
+                ? "Type your answer…"
+                : "Message…"
+            }
             className="selectable focus-gold max-h-28 flex-1 resize-none rounded-xl border border-ink/15 bg-cream/50 px-3.5 py-2.5 font-sans text-sm text-ink transition placeholder:text-ink/35"
           />
           <button
             onClick={() => void send()}
-            disabled={sending || !input.trim()}
+            disabled={sending || attaching || (!input.trim() && !pendingFile)}
             className="rounded-xl bg-ink px-4 py-2.5 font-sans text-sm font-medium text-cream shadow-memo transition hover:bg-gold-deep disabled:opacity-40 disabled:hover:bg-ink"
           >
             Send
