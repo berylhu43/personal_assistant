@@ -2,10 +2,27 @@ import { useEffect, useRef, useState } from "react";
 import { runChatTurn, clearMessages } from "../lib/chat";
 import { distillConversation } from "../lib/distill";
 import { downloadPlan } from "../lib/planExport";
+import {
+  pickDocument,
+  extractText,
+  extractAssignments,
+  FileExtractError,
+  type AssignmentCandidate,
+} from "../lib/fileTasks";
+import { createCommitment } from "../lib/localCalendar";
 import { MissingApiKeyError } from "../lib/anthropic";
 import { friendlyError } from "../lib/errors";
 import type { PendingPlan } from "../lib/store";
 import type { CalendarEvent, PendingEmail, ChatMessage } from "../lib/types";
+
+function formatDue(date: string): string {
+  const d = new Date(`${date}T00:00:00`);
+  return d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 interface UIMessage extends ChatMessage {
   id: string;
@@ -40,6 +57,10 @@ export default function ChatPanel({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [closing, setClosing] = useState(false);
+  // Assignment candidates extracted from an uploaded document, awaiting confirm.
+  const [fileItems, setFileItems] = useState<AssignmentCandidate[]>([]);
+  const [fileCourse, setFileCourse] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,7 +68,7 @@ export default function ChatPanel({
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages, sending, planning, planResult]);
+  }, [messages, sending, planning, planResult, fileItems, attaching]);
 
   async function send() {
     const text = input.trim();
@@ -90,6 +111,85 @@ export default function ChatPanel({
     }
   }
 
+  // Attach a document (syllabus etc.), extract assignment candidates, and surface
+  // them as confirm-to-add cards. Nothing is written until the user taps Add.
+  async function attachFile() {
+    if (attaching || sending) return;
+    let path: string | null = null;
+    try {
+      path = await pickDocument();
+    } catch (e) {
+      console.error("file pick failed:", e);
+      return;
+    }
+    if (!path) return;
+
+    const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
+    setAttaching(true);
+    setMessages((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), role: "user", content: `📎 ${name}` },
+    ]);
+
+    try {
+      const { text } = await extractText(path);
+      const { course, items } = await extractAssignments(text);
+      if (items.length === 0) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content:
+              "I read that file but couldn't find any assignments with due dates.",
+          },
+        ]);
+      } else {
+        setFileCourse(course);
+        setFileItems(items);
+        const label = course ? ` for ${course}` : "";
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `Found ${items.length} item${
+              items.length > 1 ? "s" : ""
+            }${label} with due dates — confirm the ones to add:`,
+          },
+        ]);
+      }
+    } catch (e) {
+      console.error("file extraction failed:", e);
+      if (e instanceof MissingApiKeyError) onNeedApiKey();
+      const content =
+        e instanceof FileExtractError ? e.message : friendlyError(e);
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content },
+      ]);
+    } finally {
+      setAttaching(false);
+    }
+  }
+
+  async function addFileItem(item: AssignmentCandidate) {
+    const title = fileCourse ? `${fileCourse}: ${item.title}` : item.title;
+    await createCommitment({
+      userId,
+      title,
+      date: item.due,
+      time: null,
+      source: "file",
+    });
+    setFileItems((prev) => prev.filter((x) => x !== item));
+    onCommitmentCreated();
+  }
+
+  function dismissFileItem(item: AssignmentCandidate) {
+    setFileItems((prev) => prev.filter((x) => x !== item));
+  }
+
   // End & save: distill the conversation into durable stores, clear it, and
   // collapse to the todo view. If distillation fails, keep the transcript so the
   // next launch retries — but still reset the UI.
@@ -108,6 +208,8 @@ export default function ChatPanel({
     }
     setMessages([]);
     setInput("");
+    setFileItems([]);
+    setFileCourse(null);
     setClosing(false);
     onClose();
   }
@@ -180,6 +282,54 @@ export default function ChatPanel({
           </div>
         )}
 
+        {/* Extracting assignments from an attached document */}
+        {attaching && (
+          <div className="flex justify-start">
+            <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-gold/40 bg-gold/10 px-3.5 py-2 font-sans text-xs text-ink/70 shadow-memo">
+              <span className="h-1.5 w-1.5 animate-ping rounded-full bg-gold" />
+              Reading the file…
+            </div>
+          </div>
+        )}
+
+        {/* Assignment candidates extracted from a document (confirm to add) */}
+        {fileItems.length > 0 && (
+          <div className="space-y-2">
+            {fileItems.map((it, i) => (
+              <div
+                key={`${it.title}-${i}`}
+                className="lift relative rounded-xl border border-ink/10 bg-paper/80 px-3 py-2.5 pr-9 shadow-memo hover:border-gold/50"
+              >
+                <button
+                  onClick={() => dismissFileItem(it)}
+                  aria-label="Dismiss"
+                  className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full font-mono text-ink/35 transition hover:bg-ink/5 hover:text-ink"
+                >
+                  ×
+                </button>
+                <p className="font-sans text-[13px] font-medium leading-snug text-ink">
+                  {it.title}
+                  <span className="ml-1.5 rounded-full bg-gold/20 px-1.5 py-px font-mono text-[8px] uppercase tracking-wide text-gold-deep">
+                    {it.type}
+                  </span>
+                </p>
+                <p className="mt-0.5 font-mono text-[10px] text-ink/45">
+                  Due {formatDue(it.due)}
+                  {it.note ? ` · ${it.note}` : ""}
+                </p>
+                <div className="mt-2">
+                  <button
+                    onClick={() => void addFileItem(it)}
+                    className="rounded-full bg-ink px-3 py-1 font-sans text-[11px] font-medium text-cream transition hover:bg-gold-deep"
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Completed plan: message + Download control */}
         {!planning && planResult && (
           <div className="flex justify-start">
@@ -202,6 +352,28 @@ export default function ChatPanel({
 
       <div className="no-drag border-t border-ink/10 bg-paper/50 px-4 py-3">
         <div className="flex items-end gap-2">
+          <button
+            onClick={() => void attachFile()}
+            disabled={attaching || sending}
+            title="Attach a file (PDF, txt, or md)"
+            aria-label="Attach file"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-ink/15 bg-cream/50 text-ink/45 transition hover:border-gold hover:text-gold-deep disabled:opacity-40"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+              className={attaching ? "animate-spin" : ""}
+            >
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+          </button>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}

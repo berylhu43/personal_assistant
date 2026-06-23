@@ -17,6 +17,14 @@
       "identifier": "fs:allow-write-text-file",
       "allow": [{ "path": "$HOME/**" }]
     },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [{ "path": "$HOME/**" }]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "$HOME/**" }]
+    },
     "window-state:default",
     "google-auth:default",
     "sql:default",
