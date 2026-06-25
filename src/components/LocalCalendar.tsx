@@ -83,6 +83,24 @@ export default function LocalCalendar({
     return !!(c.note && c.note.trim()) || !!c.goalId;
   }
 
+  // Load (and cache) a task's plan-day detail from its goal's plan document.
+  const loadDayDetail = useCallback(async (c: Commitment) => {
+    if (!c.goalId) return;
+    try {
+      let days = docCache.current.get(c.goalId);
+      if (!days) {
+        const row = await getPlanByGoal(c.goalId);
+        const parsed = row ? (JSON.parse(row.content) as PlanDay[]) : [];
+        days = Array.isArray(parsed) ? parsed : [];
+        docCache.current.set(c.goalId, days);
+      }
+      const day = days.find((d) => d.date === c.date) ?? null;
+      setDayById((m) => ({ ...m, [c.id]: day }));
+    } catch {
+      setDayById((m) => ({ ...m, [c.id]: null }));
+    }
+  }, []);
+
   async function toggleExpand(c: Commitment) {
     if (!expandable(c)) return;
     const willOpen = !expanded.has(c.id);
@@ -91,21 +109,8 @@ export default function LocalCalendar({
       next.has(c.id) ? next.delete(c.id) : next.add(c.id);
       return next;
     });
-    // Lazily load this task's plan-day detail from its goal's plan document.
     if (willOpen && c.goalId && dayById[c.id] === undefined) {
-      try {
-        let days = docCache.current.get(c.goalId);
-        if (!days) {
-          const row = await getPlanByGoal(c.goalId);
-          const parsed = row ? (JSON.parse(row.content) as PlanDay[]) : [];
-          days = Array.isArray(parsed) ? parsed : [];
-          docCache.current.set(c.goalId, days);
-        }
-        const day = days.find((d) => d.date === c.date) ?? null;
-        setDayById((m) => ({ ...m, [c.id]: day }));
-      } catch {
-        setDayById((m) => ({ ...m, [c.id]: null }));
-      }
+      void loadDayDetail(c);
     }
   }
 
@@ -116,7 +121,23 @@ export default function LocalCalendar({
 
   useEffect(() => {
     refresh();
+    // An external refresh (refreshKey) may include plan-day edits — drop cached
+    // plan docs + matched detail so expanded tasks re-load fresh content.
+    docCache.current.clear();
+    setDayById({});
   }, [refresh, refreshKey]);
+
+  // Keep expanded tasks' plan-day detail loaded — re-fetches after the cache is
+  // cleared above, so an edit made elsewhere shows live without re-toggling.
+  useEffect(() => {
+    const all = [...items, ...later];
+    for (const id of expanded) {
+      const c = all.find((x) => x.id === id);
+      if (c && c.goalId && dayById[c.id] === undefined) {
+        void loadDayDetail(c);
+      }
+    }
+  }, [items, later, expanded, dayById, loadDayDetail]);
 
   async function toggle(c: Commitment) {
     await setCommitmentDone(c.id, !c.done);

@@ -24,3 +24,11 @@ export async function getPlanByGoal(goalId: string): Promise<PlanRow | null> {
     [goalId]
   );
 }
+
+/** Rewrite a plan document's content (e.g. after editing a day in-place). */
+export async function updatePlanContent(
+  id: string,
+  content: string
+): Promise<void> {
+  await execute(`UPDATE plans SET content = ?1 WHERE id = ?2`, [content, id]);
+}

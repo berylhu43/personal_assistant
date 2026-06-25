@@ -9,11 +9,21 @@ import {
   setGoalTaskTotal,
   deleteGoal,
 } from "../lib/goals";
-import { createCommitment, listByGoal } from "../lib/localCalendar";
-import { getPlanByGoal } from "../lib/plans";
+import {
+  createCommitment,
+  listByGoal,
+  updateCommitment,
+} from "../lib/localCalendar";
+import { getPlanByGoal, updatePlanContent } from "../lib/plans";
 import { openExternal } from "../lib/openExternal";
 import LinkifiedText from "./LinkifiedText";
-import type { Goal, PlanDay, Commitment } from "../lib/types";
+import type { Goal, PlanDay, PlanResource, Commitment } from "../lib/types";
+
+interface DraftResource {
+  kind: string;
+  title: string;
+  url: string;
+}
 
 /** A goal has expandable detail if it has a note, a weekly plan, or linked tasks. */
 function hasDetails(g: Goal): boolean {
@@ -85,6 +95,24 @@ export default function GoalTracker({
   const [eStart, setEStart] = useState("");
   const [eEnd, setEEnd] = useState("");
   const [eNote, setENote] = useState("");
+
+  // ---- Inline edit state for a goal's linked task (one at a time) ----
+  const [teId, setTeId] = useState<string | null>(null);
+  const [teTitle, setTeTitle] = useState("");
+  const [teDate, setTeDate] = useState("");
+  const [teNote, setTeNote] = useState("");
+
+  // ---- Inline edit state for an LLM plan-document day (one at a time) ----
+  // pdKey is `${goalId}|${originalDate}` so we can locate the day to replace.
+  const [pdKey, setPdKey] = useState<string | null>(null);
+  const [pdGoalId, setPdGoalId] = useState("");
+  const [pdOrigDate, setPdOrigDate] = useState("");
+  const [pdDate, setPdDate] = useState("");
+  const [pdTopic, setPdTopic] = useState("");
+  const [pdTask, setPdTask] = useState("");
+  const [pdPractice, setPdPractice] = useState("");
+  const [pdEst, setPdEst] = useState("");
+  const [pdResources, setPdResources] = useState<DraftResource[]>([]);
 
   async function toggleOpen(goal: Goal) {
     const willOpen = openPlan !== goal.id;
@@ -191,6 +219,100 @@ export default function GoalTracker({
     });
     setEditingId(null);
     refresh();
+  }
+
+  function startTaskEdit(t: Commitment) {
+    setTeId(t.id);
+    setTeTitle(t.title);
+    setTeDate(t.date);
+    setTeNote(t.note ?? "");
+  }
+
+  async function saveTaskEdit(goalId: string, t: Commitment) {
+    await updateCommitment(t.id, {
+      title: teTitle.trim() || t.title,
+      date: teDate || t.date,
+      note: teNote,
+    });
+    setTeId(null);
+    // Reload this goal's linked tasks, and refresh the Upcoming panel (same row).
+    const tasks = await listByGoal(goalId);
+    setLinkedTasks((m) => ({ ...m, [goalId]: tasks }));
+    onTasksChanged?.();
+  }
+
+  function startDayEdit(goalId: string, d: PlanDay) {
+    setPdKey(`${goalId}|${d.date}`);
+    setPdGoalId(goalId);
+    setPdOrigDate(d.date);
+    setPdDate(d.date);
+    setPdTopic(d.topic ?? "");
+    setPdTask(d.task ?? "");
+    setPdPractice(d.practice ?? "");
+    setPdEst(d.est_time ?? "");
+    setPdResources(
+      (d.resources ?? []).map((r) => ({
+        kind: r.kind ?? "doc",
+        title: r.title ?? "",
+        url: r.url ?? "",
+      }))
+    );
+  }
+
+  function setResource(i: number, field: "title" | "url", value: string) {
+    setPdResources((prev) =>
+      prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r))
+    );
+  }
+
+  /**
+   * Save an edited plan day: rewrite the plan JSON AND sync the matching daily
+   * task (commitment, joined by date) so the change reflects in Upcoming too.
+   */
+  async function saveDayEdit() {
+    const goalId = pdGoalId;
+    const origDate = pdOrigDate;
+    const row = await getPlanByGoal(goalId);
+    if (!row) {
+      setPdKey(null);
+      return;
+    }
+    let days: PlanDay[] = [];
+    try {
+      const parsed = JSON.parse(row.content);
+      days = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      days = [];
+    }
+    const resources: PlanResource[] = pdResources
+      .filter((r) => r.title.trim() || r.url.trim())
+      .map((r) => ({ kind: r.kind || "doc", title: r.title.trim(), url: r.url.trim() }));
+    const newDay: PlanDay = {
+      date: pdDate || origDate,
+      topic: pdTopic,
+      task: pdTask,
+      practice: pdPractice || undefined,
+      est_time: pdEst || undefined,
+      resources: resources.length ? resources : undefined,
+    };
+    const idx = days.findIndex((d) => d.date === origDate);
+    if (idx >= 0) days[idx] = newDay;
+    else days.push(newDay);
+    days.sort((a, b) => a.date.localeCompare(b.date));
+
+    await updatePlanContent(row.id, JSON.stringify(days));
+
+    // Keep the linked daily task (matched by the old date) in sync.
+    const tasks = await listByGoal(goalId);
+    const c = tasks.find((t) => t.date === origDate);
+    if (c) {
+      const title = (newDay.topic || newDay.task || c.title).slice(0, 120);
+      await updateCommitment(c.id, { title, date: newDay.date });
+    }
+
+    setPlanDocs((m) => ({ ...m, [goalId]: days }));
+    setPdKey(null);
+    onTasksChanged?.();
   }
 
   async function toggle(g: Goal) {
@@ -381,40 +503,157 @@ export default function GoalTracker({
 
                       {planDocs[goal.id]?.length ? (
                         <ul className="space-y-2">
-                          {planDocs[goal.id].map((d, i) => (
-                            <li key={i} className="leading-snug">
-                              <p className="font-sans text-xs text-ink/80">
-                                <span className="font-mono text-[10px] text-gold-deep">
-                                  {d.date}
-                                </span>{" "}
-                                {d.topic}
-                              </p>
-                              {d.task && (
-                                <p className="font-sans text-[11px] text-ink/55">
-                                  {d.task}
-                                </p>
-                              )}
-                              {d.resources?.length ? (
-                                <ul className="mt-0.5 space-y-1">
-                                  {d.resources.map((r, j) => (
-                                    <li
-                                      key={j}
-                                      className="selectable font-mono text-[10px] leading-snug text-ink/55"
-                                    >
-                                      {r.title} —{" "}
-                                      <button
-                                        onClick={() => void openExternal(r.url)}
-                                        className="break-all text-left text-gold-deep underline-offset-2 hover:underline"
-                                        title="Open in browser"
+                          {planDocs[goal.id].map((d, i) =>
+                            pdKey === `${goal.id}|${d.date}` ? (
+                              /* ---- Inline plan-day edit ---- */
+                              <li key={i}>
+                                <div className="space-y-1.5 rounded-md border border-gold/40 bg-gold/5 p-1.5">
+                                  <input
+                                    type="date"
+                                    value={pdDate}
+                                    onChange={(e) => setPdDate(e.target.value)}
+                                    className={`${dateClass} w-full`}
+                                  />
+                                  <input
+                                    value={pdTopic}
+                                    onChange={(e) => setPdTopic(e.target.value)}
+                                    placeholder="Topic"
+                                    className={inputClass}
+                                  />
+                                  <input
+                                    value={pdTask}
+                                    onChange={(e) => setPdTask(e.target.value)}
+                                    placeholder="Task"
+                                    className={inputClass}
+                                  />
+                                  <input
+                                    value={pdPractice}
+                                    onChange={(e) => setPdPractice(e.target.value)}
+                                    placeholder="Practice (optional)"
+                                    className={inputClass}
+                                  />
+                                  <input
+                                    value={pdEst}
+                                    onChange={(e) => setPdEst(e.target.value)}
+                                    placeholder="Est. time, e.g. 2h (optional)"
+                                    className={inputClass}
+                                  />
+                                  <div>
+                                    <span className="font-mono text-[10px] uppercase tracking-wide text-ink/45">
+                                      Resources
+                                    </span>
+                                    {pdResources.map((r, ri) => (
+                                      <div
+                                        key={ri}
+                                        className="mt-1 flex items-center gap-1.5"
                                       >
-                                        {r.url}
-                                      </button>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : null}
-                            </li>
-                          ))}
+                                        <input
+                                          value={r.title}
+                                          onChange={(e) =>
+                                            setResource(ri, "title", e.target.value)
+                                          }
+                                          placeholder="Title"
+                                          className={`${inputClass} flex-1`}
+                                        />
+                                        <input
+                                          value={r.url}
+                                          onChange={(e) =>
+                                            setResource(ri, "url", e.target.value)
+                                          }
+                                          placeholder="https://…"
+                                          className={`${inputClass} flex-1`}
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setPdResources((prev) =>
+                                              prev.filter((_, x) => x !== ri)
+                                            )
+                                          }
+                                          aria-label="Remove resource"
+                                          className="shrink-0 font-mono text-ink/30 hover:text-ink/60"
+                                        >
+                                          ×
+                                        </button>
+                                      </div>
+                                    ))}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setPdResources((prev) => [
+                                          ...prev,
+                                          { kind: "doc", title: "", url: "" },
+                                        ])
+                                      }
+                                      className="mt-1 font-mono text-[10px] uppercase tracking-wide text-gold-deep hover:underline"
+                                    >
+                                      + resource
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center justify-end gap-3 pt-0.5">
+                                    <button
+                                      onClick={() => setPdKey(null)}
+                                      className="font-sans text-xs text-ink/50 transition hover:text-ink"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      onClick={() => void saveDayEdit()}
+                                      className="rounded-full bg-ink px-3 py-1 font-sans text-xs font-medium text-cream transition hover:bg-gold-deep"
+                                    >
+                                      Save
+                                    </button>
+                                  </div>
+                                </div>
+                              </li>
+                            ) : (
+                              /* ---- Read-only plan day ---- */
+                              <li key={i} className="group/day leading-snug">
+                                <p className="flex items-center gap-1.5 font-sans text-xs text-ink/80">
+                                  <span className="font-mono text-[10px] text-gold-deep">
+                                    {d.date}
+                                  </span>
+                                  <span className="min-w-0 flex-1">{d.topic}</span>
+                                  <button
+                                    onClick={() => startDayEdit(goal.id, d)}
+                                    aria-label="Edit day"
+                                    className="shrink-0 font-mono text-[11px] text-ink/30 opacity-0 transition group-hover/day:opacity-100 hover:text-gold-deep"
+                                  >
+                                    ✎
+                                  </button>
+                                </p>
+                                {d.task && (
+                                  <p className="font-sans text-[11px] text-ink/55">
+                                    {d.task}
+                                  </p>
+                                )}
+                                {d.practice && (
+                                  <p className="font-sans text-[11px] text-ink/45">
+                                    Practice: {d.practice}
+                                  </p>
+                                )}
+                                {d.resources?.length ? (
+                                  <ul className="mt-0.5 space-y-1">
+                                    {d.resources.map((r, j) => (
+                                      <li
+                                        key={j}
+                                        className="selectable font-mono text-[10px] leading-snug text-ink/55"
+                                      >
+                                        {r.title} —{" "}
+                                        <button
+                                          onClick={() => void openExternal(r.url)}
+                                          className="break-all text-left text-gold-deep underline-offset-2 hover:underline"
+                                          title="Open in browser"
+                                        >
+                                          {r.url}
+                                        </button>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </li>
+                            )
+                          )}
                         </ul>
                       ) : null}
 
@@ -422,19 +661,68 @@ export default function GoalTracker({
                       {!planDocs[goal.id]?.length &&
                       linkedTasks[goal.id]?.length ? (
                         <ul className="space-y-2">
-                          {linkedTasks[goal.id].map((t) => (
-                            <li key={t.id} className="leading-snug">
-                              <p className="font-sans text-xs text-ink/80">
-                                <span className="font-mono text-[10px] text-gold-deep">
-                                  {t.date}
-                                </span>{" "}
-                                {t.title}
-                              </p>
-                              {t.note && t.note.trim() && (
-                                <LinkifiedText text={t.note} />
-                              )}
-                            </li>
-                          ))}
+                          {linkedTasks[goal.id].map((t) =>
+                            teId === t.id ? (
+                              /* ---- Inline task edit ---- */
+                              <li key={t.id}>
+                                <div className="space-y-1.5 rounded-md border border-gold/40 bg-gold/5 p-1.5">
+                                  <input
+                                    value={teTitle}
+                                    onChange={(e) => setTeTitle(e.target.value)}
+                                    placeholder="Task"
+                                    className={inputClass}
+                                  />
+                                  <input
+                                    type="date"
+                                    value={teDate}
+                                    onChange={(e) => setTeDate(e.target.value)}
+                                    className={`${dateClass} w-full`}
+                                  />
+                                  <textarea
+                                    value={teNote}
+                                    onChange={(e) => setTeNote(e.target.value)}
+                                    placeholder="Detail — how-to, links…"
+                                    rows={2}
+                                    className={`${inputClass} resize-none`}
+                                  />
+                                  <div className="flex items-center justify-end gap-3 pt-0.5">
+                                    <button
+                                      onClick={() => setTeId(null)}
+                                      className="font-sans text-xs text-ink/50 transition hover:text-ink"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      onClick={() => void saveTaskEdit(goal.id, t)}
+                                      className="rounded-full bg-ink px-3 py-1 font-sans text-xs font-medium text-cream transition hover:bg-gold-deep"
+                                    >
+                                      Save
+                                    </button>
+                                  </div>
+                                </div>
+                              </li>
+                            ) : (
+                              /* ---- Read-only task row ---- */
+                              <li key={t.id} className="group/task leading-snug">
+                                <p className="flex items-center gap-1.5 font-sans text-xs text-ink/80">
+                                  <span className="font-mono text-[10px] text-gold-deep">
+                                    {t.date}
+                                  </span>
+                                  <span className="min-w-0 flex-1">{t.title}</span>
+                                  <button
+                                    onClick={() => startTaskEdit(t)}
+                                    aria-label="Edit task"
+                                    className="shrink-0 font-mono text-[11px] text-ink/30 opacity-0 transition group-hover/task:opacity-100 hover:text-gold-deep"
+                                  >
+                                    ✎
+                                  </button>
+                                </p>
+                                {t.note && t.note.trim() && (
+                                  <LinkifiedText text={t.note} />
+                                )}
+                              </li>
+                            )
+                          )}
                         </ul>
                       ) : null}
 
