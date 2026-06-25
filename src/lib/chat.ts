@@ -28,6 +28,7 @@ import type {
   MessageRow,
   CalendarEvent,
   PendingEmail,
+  TeamsMessage,
   Memory,
   Goal,
   Commitment,
@@ -111,6 +112,16 @@ function formatEmails(emails: PendingEmail[]): string {
     .join("\n");
 }
 
+function formatTeams(messages: TeamsMessage[]): string {
+  if (!messages.length) return "  (no Teams messages needing attention)";
+  return messages
+    .map((m) => {
+      const label = m.reason === "dm" ? "DM" : "mention";
+      return `  - [${label}] ${m.from}: "${m.preview}"`;
+    })
+    .join("\n");
+}
+
 function formatMemories(memories: Memory[]): string {
   if (!memories.length) return "  (nothing remembered yet)";
   return memories
@@ -143,6 +154,7 @@ function formatCommitments(commitments: Commitment[]): string {
 export function buildSystemPrompt(
   events: CalendarEvent[],
   emails: PendingEmail[],
+  teams: TeamsMessage[],
   memories: Memory[],
   goals: Goal[],
   commitments: Commitment[]
@@ -163,6 +175,9 @@ ${formatEvents(events)}
 
 Pending emails (last 48h):
 ${formatEmails(emails)}
+
+Teams messages needing attention (1:1 DMs + @mentions, last 7 days):
+${formatTeams(teams)}
 
 What you remember about the user:
 ${formatMemories(memories)}
@@ -490,7 +505,7 @@ async function applyActions(
 export async function runChatTurn(
   userId: string,
   userText: string,
-  ctx: { events: CalendarEvent[]; emails: PendingEmail[] }
+  ctx: { events: CalendarEvent[]; emails: PendingEmail[]; teams: TeamsMessage[] }
 ): Promise<ChatTurnResult> {
   await addMessage(userId, "user", userText);
 
@@ -523,6 +538,7 @@ export async function runChatTurn(
   const system = buildSystemPrompt(
     ctx.events,
     ctx.emails,
+    ctx.teams,
     memories,
     goals,
     commitments

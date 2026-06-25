@@ -221,6 +221,22 @@ CREATE TABLE IF NOT EXISTS inbox_scans (
 );
 "#,
         },
+        Migration {
+            version: 8,
+            description: "microsoft (teams/graph) oauth tokens",
+            kind: MigrationKind::Up,
+            // Mirrors google_tokens: one row per local user. refresh_token is
+            // NOT NULL but an empty string is allowed (same convention as Google).
+            sql: r#"
+CREATE TABLE IF NOT EXISTS microsoft_tokens (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"#,
+        },
     ]
 }
 
@@ -244,6 +260,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_google_auth::init())
+        .plugin(tauri_plugin_oauth::init())
         .manage(AppState {
             expanded: AtomicBool::new(false),
         })

@@ -15,6 +15,16 @@ export interface GoogleTokensRow {
   updated_at: string;
 }
 
+// Microsoft (Teams/Graph) OAuth tokens — same shape as GoogleTokensRow, stored
+// in the separate microsoft_tokens table.
+export interface MicrosoftTokensRow {
+  user_id: string;
+  access_token: string;
+  refresh_token: string;
+  expires_at: string; // ISO datetime
+  updated_at: string;
+}
+
 export interface GoalRow {
   id: string;
   user_id: string;
@@ -157,6 +167,34 @@ export interface PendingEmail {
   snippet: string;
   date: string;
   tag: EmailTag;
+}
+
+// Why a Teams message surfaced: it's a 1:1 direct message, or the user was
+// @mentioned in a group chat.
+export type TeamsReason = "dm" | "mention";
+
+export interface TeamsMessage {
+  id: string;
+  chatId: string;
+  from: string; // sender display name
+  preview: string; // plain-text snippet of the message body
+  date: string; // ISO datetime
+  reason: TeamsReason;
+}
+
+// A task candidate surfaced from an external source and shown in the Inbox for
+// the user to confirm (Add) or dismiss. Email and Teams both produce this shape
+// so they merge into one Inbox list.
+export interface InboxTaskCandidate {
+  source: "email" | "teams";
+  sourceId: string; // email id or Teams message id (React key + traceability)
+  from: string; // sender
+  subject: string; // email subject, or a short Teams context ("Direct message" / "@mention")
+  task: {
+    title: string;
+    date?: string; // absolute YYYY-MM-DD
+    kind: "commitment" | "goal";
+  };
 }
 
 export interface Briefing {

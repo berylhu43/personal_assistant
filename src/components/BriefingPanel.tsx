@@ -3,12 +3,11 @@ import {
   getOrScanInbox,
   rescanInbox,
   setCachedInbox,
-  type EmailTaskCandidate,
 } from "../lib/emailTasks";
 import { createCommitment } from "../lib/localCalendar";
 import { saveGoal } from "../lib/goals";
 import { friendlyError } from "../lib/errors";
-import type { Briefing } from "../lib/types";
+import type { Briefing, InboxTaskCandidate } from "../lib/types";
 
 function todayKey(): string {
   const d = new Date();
@@ -31,7 +30,7 @@ export default function BriefingPanel({
   onTaskAdded: () => void;
 }) {
   // Inbox task candidates (null = not scanned yet).
-  const [candidates, setCandidates] = useState<EmailTaskCandidate[] | null>(null);
+  const [candidates, setCandidates] = useState<InboxTaskCandidate[] | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const startedRef = useRef(false);
@@ -67,7 +66,7 @@ export default function BriefingPanel({
     void scan(false);
   }, [expanded, scan]);
 
-  async function addCandidate(c: EmailTaskCandidate) {
+  async function addCandidate(c: InboxTaskCandidate) {
     if (c.task.kind === "goal") {
       await saveGoal({ userId, title: c.task.title, targetDate: c.task.date ?? null });
     } else {
@@ -76,7 +75,7 @@ export default function BriefingPanel({
         title: c.task.title,
         date: c.task.date ?? todayKey(),
         time: null,
-        source: "email",
+        source: c.source,
       });
     }
     const next = (candidates ?? []).filter((x) => x !== c);
@@ -85,7 +84,7 @@ export default function BriefingPanel({
     onTaskAdded();
   }
 
-  function dismiss(c: EmailTaskCandidate) {
+  function dismiss(c: InboxTaskCandidate) {
     const next = (candidates ?? []).filter((x) => x !== c);
     setCandidates(next);
     void setCachedInbox(userId, next);
@@ -184,7 +183,7 @@ export default function BriefingPanel({
           <ul className="space-y-2">
             {(candidates ?? []).map((c, i) => (
               <li
-                key={`${c.emailId}-${i}`}
+                key={`${c.sourceId}-${i}`}
                 className="lift relative rounded-xl border border-ink/10 bg-paper/80 px-3 py-2.5 pr-9 shadow-memo hover:border-gold/50"
               >
                 <button
@@ -202,6 +201,15 @@ export default function BriefingPanel({
                       · {c.task.date}
                     </span>
                   )}
+                  <span
+                    className={`ml-1.5 rounded-full px-1.5 py-px font-mono text-[8px] uppercase tracking-wide ${
+                      c.source === "teams"
+                        ? "bg-[#4B53BC]/15 text-[#4B53BC]"
+                        : "bg-ink/10 text-ink/50"
+                    }`}
+                  >
+                    {c.source}
+                  </span>
                   {c.task.kind === "goal" && (
                     <span className="ml-1.5 rounded-full bg-gold/20 px-1.5 py-px font-mono text-[8px] uppercase tracking-wide text-gold-deep">
                       goal

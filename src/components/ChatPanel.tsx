@@ -13,7 +13,12 @@ import { createCommitment } from "../lib/localCalendar";
 import { MissingApiKeyError } from "../lib/anthropic";
 import { friendlyError } from "../lib/errors";
 import type { PendingPlan } from "../lib/store";
-import type { CalendarEvent, PendingEmail, ChatMessage } from "../lib/types";
+import type {
+  CalendarEvent,
+  PendingEmail,
+  TeamsMessage,
+  ChatMessage,
+} from "../lib/types";
 
 function formatDue(date: string): string {
   const d = new Date(`${date}T00:00:00`);
@@ -32,6 +37,7 @@ export default function ChatPanel({
   userId,
   events,
   emails,
+  teams,
   planning,
   planResult,
   onPlanConfirmed,
@@ -43,6 +49,7 @@ export default function ChatPanel({
   userId: string;
   events: CalendarEvent[];
   emails: PendingEmail[];
+  teams: TeamsMessage[];
   planning: boolean;
   planResult: { reply: string; goalId: string | null } | null;
   onPlanConfirmed: (pending: PendingPlan) => void;
@@ -106,7 +113,7 @@ export default function ChatPanel({
     setSending(true);
 
     try {
-      const result = await runChatTurn(userId, text, { events, emails });
+      const result = await runChatTurn(userId, text, { events, emails, teams });
       // A learning-plan confirmation: hand off to App (survives collapse). The
       // App-driven indicator + result/Download will render below.
       if (result.planConfirmed) {

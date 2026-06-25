@@ -68,17 +68,6 @@ export async function signIn(): Promise<User> {
     scopes: SCOPES,
   });
 
-  // TEMP DIAGNOSTIC — confirm Google returned a refresh token. With the vendored
-  // plugin patch (access_type=offline + prompt=consent) this should now be PRESENT
-  // with a non-zero length on a fresh consent. Remove once verified.
-  console.log("[signIn] googleSignIn response keys:", Object.keys(res ?? {}));
-  console.log(
-    "[signIn] refreshToken present?",
-    Object.prototype.hasOwnProperty.call(res ?? {}, "refreshToken"),
-    "| value len:",
-    (res?.refreshToken ?? "").length
-  );
-
   // Display labels only — never used as an identity/ownership key.
   const claims = res.idToken ? decodeIdToken(res.idToken) : null;
   if (claims?.email || claims?.name) {
@@ -182,10 +171,6 @@ export async function getValidAccessToken(): Promise<string> {
     scopes: SCOPES,
   });
 
-  console.log("refresh expiresAt =", refreshed.expiresAt,
-            "| len:", String(refreshed.expiresAt).length,
-            "| computed:", expiresAtIso(refreshed.expiresAt));
-
   await execute(
     `UPDATE google_tokens
        SET access_token = ?1, refresh_token = ?2, expires_at = ?3, updated_at = datetime('now')
@@ -197,7 +182,6 @@ export async function getValidAccessToken(): Promise<string> {
       localId,
     ]
   );
-  
 
   return refreshed.accessToken;
 }

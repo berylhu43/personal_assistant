@@ -6,10 +6,18 @@ import * as auth from "./lib/auth";
 import { initApp } from "./lib/init";
 import { getApiKey, type PendingPlan } from "./lib/store";
 import { getTodayEvents, getPendingEmails } from "./lib/google";
+import { getTeamsMessages } from "./lib/teams";
+import { isTeamsConnected } from "./lib/msAuth";
 import { getBriefing, getOrGenerateBriefing, generateBriefing } from "./lib/briefing";
 import { generatePlan } from "./lib/planning";
 import { addMessage } from "./lib/chat";
-import type { User, CalendarEvent, PendingEmail, Briefing } from "./lib/types";
+import type {
+  User,
+  CalendarEvent,
+  PendingEmail,
+  TeamsMessage,
+  Briefing,
+} from "./lib/types";
 
 import SignInScreen from "./components/SignInScreen";
 import GoalTracker from "./components/GoalTracker";
@@ -73,6 +81,7 @@ export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [emails, setEmails] = useState<PendingEmail[]>([]);
+  const [teams, setTeams] = useState<TeamsMessage[]>([]);
   const [briefing, setBriefing] = useState<Briefing | null>(null);
   const [loadingBriefing, setLoadingBriefing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -121,9 +130,13 @@ export default function App() {
     // generateBriefing is internally resilient (it falls back if Google/model
     // fail) and loadDayData only runs once signed in, so we always
     // get-or-generate rather than gating on the strict isGoogleConnected().
-    const [ev, em, br] = await Promise.all([
+    const [ev, em, tm, br] = await Promise.all([
       getTodayEvents().catch(() => [] as CalendarEvent[]),
       getPendingEmails().catch(() => [] as PendingEmail[]),
+      // Teams is an optional, separate connection — only fetch when connected.
+      isTeamsConnected().then((on) =>
+        on ? getTeamsMessages().catch(() => [] as TeamsMessage[]) : []
+      ),
       getOrGenerateBriefing(u.id).catch((e) => {
         // Keep briefing failures visible rather than silently swallowing them.
         console.error("[briefing] load failed:", e);
@@ -132,6 +145,7 @@ export default function App() {
     ]);
     setEvents(ev);
     setEmails(em);
+    setTeams(tm);
     setBriefing(br);
     setLoadingBriefing(false);
   }, []);
@@ -214,6 +228,7 @@ export default function App() {
     await auth.signOut();
     setEvents([]);
     setEmails([]);
+    setTeams([]);
     setBriefing(null);
     setStatus("signed-out");
     await toggleExpanded(false);
@@ -428,6 +443,7 @@ export default function App() {
                   userId={user.id}
                   events={events}
                   emails={emails}
+                  teams={teams}
                   planning={planning}
                   planResult={planResult}
                   onPlanConfirmed={(pending) => void runPlan(pending)}
