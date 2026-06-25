@@ -57,19 +57,16 @@ function expiresAtIso(expiresAtSeconds: number | undefined): string {
 export async function signIn(): Promise<User> {
   const localId = await getLocalUserId();
 
-  // Request offline access + forced consent so Google reliably returns a
-  // refresh token (it otherwise omits it on repeat authorizations). These keys
-  // aren't in the plugin's typed options, so we pass them via a variable
-  // (avoids the excess-property check); the plugin forwards/ignores them.
-  const signInOpts = {
+  // Offline access + forced consent (so Google returns a refresh token, and
+  // re-issues it on every authorization) is requested in the *Rust* plugin: it
+  // hardcodes access_type=offline / prompt=consent on the OAuth URL. The upstream
+  // crate exposes no option for this, so we run a vendored, patched copy — see
+  // src-tauri/vendor/tauri-plugin-google-auth/src/desktop.rs ("LOCAL PATCH").
+  const res = await googleSignIn({
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
     scopes: SCOPES,
-    access_type: "offline",
-    prompt: "consent",
-  };
-  const res = await googleSignIn(signInOpts);
-
+  });
 
   // Display labels only — never used as an identity/ownership key.
   const claims = res.idToken ? decodeIdToken(res.idToken) : null;
@@ -86,7 +83,14 @@ export async function signIn(): Promise<User> {
      VALUES (?1, ?2, ?3, ?4, datetime('now'))
      ON CONFLICT(user_id) DO UPDATE SET
        access_token = excluded.access_token,
-       refresh_token = excluded.refresh_token,
+       -- Never clobber a good stored refresh token with an empty one: Google only
+       -- returns a refresh token on the (consent) authorization that minted it, so
+       -- a re-login that omits it must keep the existing value.
+       refresh_token = CASE
+         WHEN excluded.refresh_token IS NOT NULL AND excluded.refresh_token != ''
+           THEN excluded.refresh_token
+         ELSE google_tokens.refresh_token
+       END,
        expires_at = excluded.expires_at,
        updated_at = datetime('now')`,
     [localId, res.accessToken, res.refreshToken ?? "", expiresAtIso(res.expiresAt)]
@@ -167,10 +171,6 @@ export async function getValidAccessToken(): Promise<string> {
     scopes: SCOPES,
   });
 
-  console.log("refresh expiresAt =", refreshed.expiresAt,
-            "| len:", String(refreshed.expiresAt).length,
-            "| computed:", expiresAtIso(refreshed.expiresAt));
-
   await execute(
     `UPDATE google_tokens
        SET access_token = ?1, refresh_token = ?2, expires_at = ?3, updated_at = datetime('now')
@@ -182,7 +182,6 @@ export async function getValidAccessToken(): Promise<string> {
       localId,
     ]
   );
-  
 
   return refreshed.accessToken;
 }

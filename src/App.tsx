@@ -6,10 +6,19 @@ import * as auth from "./lib/auth";
 import { initApp } from "./lib/init";
 import { getApiKey, type PendingPlan } from "./lib/store";
 import { getTodayEvents, getPendingEmails } from "./lib/google";
+import { getTeamsMessages } from "./lib/teams";
+import { isTeamsConnected } from "./lib/msAuth";
 import { getBriefing, getOrGenerateBriefing, generateBriefing } from "./lib/briefing";
 import { generatePlan } from "./lib/planning";
-import { addMessage } from "./lib/chat";
-import type { User, CalendarEvent, PendingEmail, Briefing } from "./lib/types";
+import { addMessage, clearMessages } from "./lib/chat";
+import { distillConversation } from "./lib/distill";
+import type {
+  User,
+  CalendarEvent,
+  PendingEmail,
+  TeamsMessage,
+  Briefing,
+} from "./lib/types";
 
 import SignInScreen from "./components/SignInScreen";
 import GoalTracker from "./components/GoalTracker";
@@ -73,6 +82,7 @@ export default function App() {
   const [expanded, setExpanded] = useState(false);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [emails, setEmails] = useState<PendingEmail[]>([]);
+  const [teams, setTeams] = useState<TeamsMessage[]>([]);
   const [briefing, setBriefing] = useState<Briefing | null>(null);
   const [loadingBriefing, setLoadingBriefing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -121,9 +131,13 @@ export default function App() {
     // generateBriefing is internally resilient (it falls back if Google/model
     // fail) and loadDayData only runs once signed in, so we always
     // get-or-generate rather than gating on the strict isGoogleConnected().
-    const [ev, em, br] = await Promise.all([
+    const [ev, em, tm, br] = await Promise.all([
       getTodayEvents().catch(() => [] as CalendarEvent[]),
       getPendingEmails().catch(() => [] as PendingEmail[]),
+      // Teams is an optional, separate connection — only fetch when connected.
+      isTeamsConnected().then((on) =>
+        on ? getTeamsMessages().catch(() => [] as TeamsMessage[]) : []
+      ),
       getOrGenerateBriefing(u.id).catch((e) => {
         // Keep briefing failures visible rather than silently swallowing them.
         console.error("[briefing] load failed:", e);
@@ -132,6 +146,7 @@ export default function App() {
     ]);
     setEvents(ev);
     setEmails(em);
+    setTeams(tm);
     setBriefing(br);
     setLoadingBriefing(false);
   }, []);
@@ -172,6 +187,36 @@ export default function App() {
     setExpanded(next);
     await setWindowExpanded(next);
   }, []);
+
+  // Collapsing the chat distills the conversation into durable memory and clears
+  // it — so every collapse is a clean save, not just the "End & save" button.
+  // An effect on the expanded true→false transition catches ALL collapse paths
+  // (header button, tray toggle, the 10:00 briefing-end). distillConversation is
+  // a no-op when there are no messages, so an empty glance costs nothing.
+  const prevExpandedRef = useRef(expanded);
+  const distillingRef = useRef(false);
+  useEffect(() => {
+    const was = prevExpandedRef.current;
+    prevExpandedRef.current = expanded;
+    if (!was || expanded) return; // only run on a true → false transition
+    const u = userRef.current;
+    if (!u || distillingRef.current) return;
+    distillingRef.current = true;
+    (async () => {
+      try {
+        await distillConversation(u.id);
+        await clearMessages(u.id);
+        // Memory/goals/commitments may have changed — refresh the left panel.
+        setGoalsRefresh((n) => n + 1);
+        setCalendarRefresh((n) => n + 1);
+      } catch (e) {
+        // Keep the transcript for a later retry (next collapse or next launch).
+        console.error("[collapse-distill] failed, keeping transcript:", e);
+      } finally {
+        distillingRef.current = false;
+      }
+    })();
+  }, [expanded]);
 
   // Tray + daily-timer events from the Rust shell.
   useEffect(() => {
@@ -214,6 +259,7 @@ export default function App() {
     await auth.signOut();
     setEvents([]);
     setEmails([]);
+    setTeams([]);
     setBriefing(null);
     setStatus("signed-out");
     await toggleExpanded(false);
@@ -403,7 +449,11 @@ export default function App() {
                       <span className="eyebrow">Goals</span>
                     </div>
                     <div className="rise" style={{ animationDelay: "150ms" }}>
-                      <GoalTracker userId={user.id} refreshKey={goalsRefresh} />
+                      <GoalTracker
+                        userId={user.id}
+                        refreshKey={goalsRefresh}
+                        onTasksChanged={() => setCalendarRefresh((n) => n + 1)}
+                      />
                     </div>
                   </>
                 )}
@@ -428,6 +478,7 @@ export default function App() {
                   userId={user.id}
                   events={events}
                   emails={emails}
+                  teams={teams}
                   planning={planning}
                   planResult={planResult}
                   onPlanConfirmed={(pending) => void runPlan(pending)}
@@ -443,10 +494,7 @@ export default function App() {
       </div>
 
       {showSettings && (
-        <Settings
-          onClose={() => setShowSettings(false)}
-          onSaved={() => setShowSettings(false)}
-        />
+        <Settings onClose={() => setShowSettings(false)} />
       )}
     </div>
   );

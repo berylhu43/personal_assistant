@@ -22,7 +22,14 @@ tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-window-state = "2"
-tauri-plugin-google-auth = "0.5"
+# Tiny loopback HTTP server to catch the OAuth redirect. Used for Microsoft
+# (Teams/Graph) sign-in; the PKCE + token exchange itself lives in TS
+# (src/lib/msAuth.ts), keeping business logic out of Rust.
+tauri-plugin-oauth = "2"
+# Vendored + patched copy of tauri-plugin-google-auth 0.5.1: the upstream crate
+# never adds access_type=offline / prompt=consent to the OAuth URL, so Google
+# never returns a refresh token. See vendor/.../src/desktop.rs ("LOCAL PATCH").
+tauri-plugin-google-auth = { path = "vendor/tauri-plugin-google-auth" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = "0.4"

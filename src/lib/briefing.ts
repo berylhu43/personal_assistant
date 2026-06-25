@@ -6,7 +6,7 @@ import {
 } from "./localCalendar";
 import { listGoals } from "./goals";
 import { listMemories } from "./memory";
-import { chat } from "./anthropic";
+import { getActiveAdapter } from "./llm";
 import type {
   Briefing,
   BriefingRow,
@@ -168,13 +168,19 @@ ${formatMemoriesForBriefing(memories)}`;
   let summary = "Here's your day.";
   let notes: string[] = [];
   try {
-    const raw = await chat([{ role: "user", content: userMsg }], BRIEFING_SYSTEM, 700);
-    const match = raw.match(/\{[\s\S]*\}/);
-    const parsed = JSON.parse(match ? match[0] : raw);
+    const { adapter, config } = await getActiveAdapter();
+    const parsed = await adapter.completeJSON<{ summary?: string; notes?: unknown }>(
+      {
+        system: BRIEFING_SYSTEM,
+        messages: [{ role: "user", content: userMsg }],
+        maxTokens: 700,
+      },
+      config
+    );
     summary = parsed.summary ?? summary;
     notes = Array.isArray(parsed.notes) ? parsed.notes : [];
   } catch {
-    // Fall back to a minimal briefing if the model/JSON fails.
+    // Fall back to a minimal briefing if the model/JSON/call fails.
     summary = `${events.length} event(s) and ${commitments.length} commitment(s) today.`;
   }
 

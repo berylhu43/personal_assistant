@@ -221,6 +221,72 @@ CREATE TABLE IF NOT EXISTS inbox_scans (
 );
 "#,
         },
+        Migration {
+            version: 8,
+            description: "microsoft (teams/graph) oauth tokens",
+            kind: MigrationKind::Up,
+            // Mirrors google_tokens: one row per local user. refresh_token is
+            // NOT NULL but an empty string is allowed (same convention as Google).
+            sql: r#"
+CREATE TABLE IF NOT EXISTS microsoft_tokens (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  access_token TEXT NOT NULL,
+  refresh_token TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"#,
+        },
+        Migration {
+            version: 9,
+            description: "llm providers (multi-provider api keys)",
+            kind: MigrationKind::Up,
+            // Seed rows are inserted with ON CONFLICT DO NOTHING so re-applying
+            // never duplicates a row or wipes a key. api_key is left NULL (user
+            // fills it in); is_active starts 0 for all — the TS one-time
+            // migration flips anthropic active iff a key is copied in.
+            sql: r#"
+CREATE TABLE IF NOT EXISTS llm_providers (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  api_format TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  default_model TEXT NOT NULL,
+  api_key TEXT,
+  supports_web_search INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT INTO llm_providers
+  (id, display_name, api_format, base_url, default_model, supports_web_search, is_active)
+VALUES
+  ('anthropic', 'Claude',   'anthropic',         'https://api.anthropic.com',                                  'claude-sonnet-4-6', 1, 0),
+  ('openai',    'GPT',      'openai_compatible', 'https://api.openai.com/v1',                                  'gpt-5.4',           1, 0),
+  ('deepseek',  'DeepSeek', 'openai_compatible', 'https://api.deepseek.com',                                   'deepseek-chat',     0, 0),
+  ('qwen',      'Qwen',     'openai_compatible', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',     'qwen-max',          0, 0)
+ON CONFLICT(id) DO NOTHING;
+"#,
+        },
+        Migration {
+            version: 10,
+            description: "free-form detail note on goals and tasks",
+            kind: MigrationKind::Up,
+            // Free-form, user-editable detail (how-to + links) for manually
+            // created goals/tasks — the manual analog of the LLM plan detail.
+            sql: r#"
+ALTER TABLE goals ADD COLUMN note TEXT;
+ALTER TABLE calendar ADD COLUMN note TEXT;
+"#,
+        },
+        Migration {
+            version: 11,
+            description: "goal start date",
+            kind: MigrationKind::Up,
+            sql: r#"
+ALTER TABLE goals ADD COLUMN start_date TEXT;
+"#,
+        },
     ]
 }
 
@@ -244,6 +310,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_google_auth::init())
+        .plugin(tauri_plugin_oauth::init())
         .manage(AppState {
             expanded: AtomicBool::new(false),
         })

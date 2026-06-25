@@ -27,6 +27,8 @@
     },
     "window-state:default",
     "google-auth:default",
+    "oauth:allow-start",
+    "oauth:allow-cancel",
     "sql:default",
     "sql:allow-load",
     "sql:allow-execute",
@@ -38,7 +40,12 @@
         { "url": "https://api.anthropic.com/*" },
         { "url": "https://www.googleapis.com/*" },
         { "url": "https://gmail.googleapis.com/*" },
-        { "url": "https://oauth2.googleapis.com/*" }
+        { "url": "https://oauth2.googleapis.com/*" },
+        { "url": "https://login.microsoftonline.com/*" },
+        { "url": "https://graph.microsoft.com/*" },
+        { "url": "https://api.openai.com/*" },
+        { "url": "https://api.deepseek.com/*" },
+        { "url": "https://dashscope-intl.aliyuncs.com/*" }
       ]
     }
   ]

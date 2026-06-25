@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@choochmeque/tauri-plugin-google-auth-api": "0.5.1",
+    "@fabianlars/tauri-plugin-oauth": "^2.0.0",
     "@fontsource/courier-prime": "^5.2.8",
     "@fontsource/dm-serif-display": "^5.1.0",
     "@fontsource/inter": "^5.1.0",

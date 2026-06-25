@@ -2,7 +2,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { readFile, readTextFile } from "@tauri-apps/plugin-fs";
 import * as pdfjsLib from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { chat } from "./anthropic";
+import { getActiveAdapter, LLMParseError } from "./llm";
 
 // pdf.js runs its parser in a Web Worker; point it at the bundled worker.
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -127,13 +127,6 @@ WHEN YOU CANNOT DETERMINE CONFIDENT DUE DATES — ASK, DO NOT GUESS:
 - All text must be PLAIN TEXT — no emoji or decorative symbols.
 - If the document genuinely contains no graded deliverables at all, return { "course": ..., "needsInfo": false, "question": null, "items": [] }.`;
 
-/** Defensively parse model JSON (strip ```json fences, match outer braces). */
-function parseJson(raw: string): any {
-  const stripped = raw.replace(/```json\s*/gi, "").replace(/```/g, "");
-  const match = stripped.match(/\{[\s\S]*\}/);
-  return JSON.parse(match ? match[0] : stripped);
-}
-
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TYPES = ["assignment", "exam", "quiz", "reading"] as const;
 
@@ -157,13 +150,23 @@ ${text}
 
 Extract the graded/required deliverables with due dates as JSON now.`;
 
-  const raw = await chat([{ role: "user", content: userMsg }], EXTRACT_SYSTEM, 2048);
-
   let parsed: any;
   try {
-    parsed = parseJson(raw);
-  } catch {
-    return { course: null, items: [], needsInfo: false, question: null };
+    const { adapter, config } = await getActiveAdapter();
+    parsed = await adapter.completeJSON<any>(
+      {
+        system: EXTRACT_SYSTEM,
+        messages: [{ role: "user", content: userMsg }],
+        maxTokens: 2048,
+      },
+      config
+    );
+  } catch (e) {
+    // Unparseable → no candidates. Network/API/no-key propagate to the caller.
+    if (e instanceof LLMParseError) {
+      return { course: null, items: [], needsInfo: false, question: null };
+    }
+    throw e;
   }
 
   const items: AssignmentCandidate[] = [];

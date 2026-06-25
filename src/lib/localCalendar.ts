@@ -15,8 +15,19 @@ function rowToCommitment(r: CommitmentRow): Commitment {
     source: r.source,
     goalId: r.goal_id,
     span: r.span === "week" ? "week" : null,
+    note: r.note ?? null,
     createdAt: r.created_at,
   };
+}
+
+/** All commitments linked to a goal, date-ascending (for the goal's detail view). */
+export async function listByGoal(goalId: string): Promise<Commitment[]> {
+  const rows = await select<CommitmentRow>(
+    `SELECT * FROM calendar WHERE goal_id = ?1
+     ORDER BY date ASC, COALESCE(time, '99:99') ASC`,
+    [goalId]
+  );
+  return rows.map(rowToCommitment);
 }
 
 /** Open commitments, soonest first (overdue ones surface at the top). */
@@ -133,6 +144,7 @@ export async function createCommitment(input: {
   source?: string;
   goalId?: string | null;
   span?: "week" | null;
+  note?: string | null;
 }): Promise<string> {
   const title = stripEmoji(input.title);
   // Dedupe on title + date (case/whitespace-insensitive title).
@@ -154,8 +166,8 @@ export async function createCommitment(input: {
 
   const id = uid();
   await execute(
-    `INSERT INTO calendar (id, user_id, title, date, time, source, goal_id, span)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+    `INSERT INTO calendar (id, user_id, title, date, time, source, goal_id, span, note)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
     [
       id,
       input.userId,
@@ -165,9 +177,47 @@ export async function createCommitment(input: {
       input.source ?? "chat",
       input.goalId ?? null,
       input.span ?? null,
+      input.note?.trim() ? input.note.trim() : null,
     ]
   );
   return id;
+}
+
+/**
+ * Edit a task's title, date, time, and/or detail note. Only provided fields are
+ * changed (undefined = leave as-is; null/empty clears time or note).
+ */
+export async function updateCommitment(
+  id: string,
+  fields: {
+    title?: string;
+    date?: string;
+    time?: string | null;
+    note?: string | null;
+  }
+): Promise<void> {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  if (fields.title !== undefined) {
+    sets.push(`title = ?${i++}`);
+    params.push(stripEmoji(fields.title));
+  }
+  if (fields.date !== undefined) {
+    sets.push(`date = ?${i++}`);
+    params.push(fields.date);
+  }
+  if (fields.time !== undefined) {
+    sets.push(`time = ?${i++}`);
+    params.push(fields.time || null);
+  }
+  if (fields.note !== undefined) {
+    sets.push(`note = ?${i++}`);
+    params.push(fields.note?.trim() ? fields.note.trim() : null);
+  }
+  if (sets.length === 0) return;
+  params.push(id);
+  await execute(`UPDATE calendar SET ${sets.join(", ")} WHERE id = ?${i}`, params);
 }
 
 export async function setCommitmentDone(id: string, done: boolean): Promise<void> {

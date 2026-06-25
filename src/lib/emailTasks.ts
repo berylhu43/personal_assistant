@@ -1,8 +1,11 @@
 import { getRecentEmailsWithBody } from "./google";
-import { chat } from "./anthropic";
+import { getActiveAdapter, LLMParseError } from "./llm";
 import { listUpcoming } from "./localCalendar";
 import { listGoals } from "./goals";
 import { selectOne, execute } from "./db";
+import { isTeamsConnected } from "./msAuth";
+import { scanTeamsForTasks } from "./teamsTasks";
+import type { InboxTaskCandidate } from "./types";
 
 /** Local date as YYYY-MM-DD (kept local so briefing.ts can import this module). */
 function todayStr(): string {
@@ -11,19 +14,9 @@ function todayStr(): string {
   return new Date(d.getTime() - tz).toISOString().slice(0, 10);
 }
 
-// A task candidate surfaced from an external source (email for now). The same
-// "fetch → extract candidates → confirm" shape can later back Teams / WhatsApp:
-// add a new fetcher + scan function returning this same candidate type.
-export interface EmailTaskCandidate {
-  emailId: string;
-  from: string;
-  subject: string;
-  task: {
-    title: string;
-    date?: string; // absolute YYYY-MM-DD
-    kind: "commitment" | "goal";
-  };
-}
+// The Inbox shows task candidates from multiple sources (email + Teams), all in
+// the unified InboxTaskCandidate shape so they render in one list. Each scanner
+// (here for email, teamsTasks.ts for Teams) returns that same shape.
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -41,11 +34,6 @@ Rules:
 - When unsure whether something is a real task, OMIT it. An empty array is fine.
 - The "title" must be PLAIN TEXT — never include emoji, icons, or decorative symbols.`;
 
-function tryParse(raw: string): any {
-  const match = raw.match(/\{[\s\S]*\}/);
-  return JSON.parse(match ? match[0] : raw);
-}
-
 /**
  * Fetch recent emails and extract task CANDIDATES via a single batched model
  * call. Does NOT write to any store — candidates are confirmed by the user in
@@ -53,7 +41,7 @@ function tryParse(raw: string): any {
  */
 export async function scanInboxForTasks(
   userId: string
-): Promise<EmailTaskCandidate[]> {
+): Promise<InboxTaskCandidate[]> {
   const emails = await getRecentEmailsWithBody();
   if (emails.length === 0) return [];
 
@@ -86,16 +74,23 @@ ${emailBlocks}
 
 Extract the actionable task candidates as JSON now.`;
 
-  const raw = await chat([{ role: "user", content: userMsg }], SCAN_SYSTEM, 1024);
-
   let parsed: any;
   try {
-    parsed = tryParse(raw);
-  } catch {
-    return [];
+    const { adapter, config } = await getActiveAdapter();
+    parsed = await adapter.completeJSON<any>(
+      {
+        system: SCAN_SYSTEM,
+        messages: [{ role: "user", content: userMsg }],
+        maxTokens: 1024,
+      },
+      config
+    );
+  } catch (e) {
+    if (e instanceof LLMParseError) return []; // unparseable → nothing actionable
+    throw e; // network/API/no-key → let the caller surface it
   }
 
-  const out: EmailTaskCandidate[] = [];
+  const out: InboxTaskCandidate[] = [];
   for (const c of parsed.candidates ?? []) {
     const t = c?.task;
     if (!c?.emailId || !t?.title) continue;
@@ -103,7 +98,8 @@ Extract the actionable task candidates as JSON now.`;
     const date =
       typeof t.date === "string" && DATE_RE.test(t.date) ? t.date : undefined;
     out.push({
-      emailId: String(c.emailId),
+      source: "email",
+      sourceId: String(c.emailId),
       from: String(c.from ?? ""),
       subject: String(c.subject ?? ""),
       task: { title: String(t.title), date, kind },
@@ -112,11 +108,28 @@ Extract the actionable task candidates as JSON now.`;
   return out;
 }
 
+/**
+ * Scan ALL connected sources (email + Teams) and merge into one candidate list.
+ * Teams is only scanned when connected. Each source is independently resilient
+ * so one failing doesn't drop the other.
+ */
+async function scanAllSources(userId: string): Promise<InboxTaskCandidate[]> {
+  const [email, teams] = await Promise.all([
+    scanInboxForTasks(userId).catch(() => [] as InboxTaskCandidate[]),
+    isTeamsConnected().then((on) =>
+      on
+        ? scanTeamsForTasks(userId).catch(() => [] as InboxTaskCandidate[])
+        : ([] as InboxTaskCandidate[])
+    ),
+  ]);
+  return [...email, ...teams];
+}
+
 // ---- daily cache (one scan per day; manual refresh re-spends tokens) ----
 
 async function writeCache(
   userId: string,
-  candidates: EmailTaskCandidate[]
+  candidates: InboxTaskCandidate[]
 ): Promise<void> {
   await execute(
     `INSERT INTO inbox_scans (user_id, date, candidates)
@@ -134,7 +147,7 @@ async function writeCache(
  */
 export async function getOrScanInbox(
   userId: string
-): Promise<EmailTaskCandidate[]> {
+): Promise<InboxTaskCandidate[]> {
   const row = await selectOne<{ candidates: string }>(
     `SELECT candidates FROM inbox_scans WHERE user_id = ?1 AND date = ?2`,
     [userId, todayStr()]
@@ -147,7 +160,7 @@ export async function getOrScanInbox(
       /* fall through to a fresh scan */
     }
   }
-  const candidates = await scanInboxForTasks(userId);
+  const candidates = await scanAllSources(userId);
   await writeCache(userId, candidates);
   return candidates;
 }
@@ -155,8 +168,8 @@ export async function getOrScanInbox(
 /** Force a fresh scan, overwriting today's cache. Backs the manual Refresh. */
 export async function rescanInbox(
   userId: string
-): Promise<EmailTaskCandidate[]> {
-  const candidates = await scanInboxForTasks(userId);
+): Promise<InboxTaskCandidate[]> {
+  const candidates = await scanAllSources(userId);
   await writeCache(userId, candidates);
   return candidates;
 }
@@ -164,7 +177,7 @@ export async function rescanInbox(
 /** Overwrite today's cached candidates (after an Add/Dismiss removes one). */
 export async function setCachedInbox(
   userId: string,
-  candidates: EmailTaskCandidate[]
+  candidates: InboxTaskCandidate[]
 ): Promise<void> {
   await writeCache(userId, candidates);
 }

@@ -59,9 +59,11 @@ npm run tauri dev             # IMPORTANT: run inside Tauri, not `npm run dev`
 > runtime. Opening the Vite dev server in a plain browser will fail on every DB
 > call. Always use `npm run tauri dev`.
 
-On first launch: sign in with Google, then open **Settings (⚙)** and paste your
-**Anthropic API key**. The key is stored locally in `settings.json` and never
-committed or sent anywhere except the Anthropic API.
+On first launch: sign in with Google, then open **Settings (⚙)** and add an API
+key for at least one **LLM provider** (Claude, GPT, DeepSeek, or Qwen) and pick
+which one is active. Keys are stored locally (in the `llm_providers` table) and
+never committed or sent anywhere except that provider's API. Note: the
+study-plan feature needs web search, so it works only with **Claude or GPT**.
 
 To build a distributable app: `npm run tauri build`.
 
@@ -75,9 +77,11 @@ To build a distributable app: `npm run tauri build`.
 | --- | --- |
 | `VITE_GOOGLE_CLIENT_ID` | OAuth 2.0 **Web application** client ID. |
 | `VITE_GOOGLE_CLIENT_SECRET` | OAuth 2.0 client secret. |
+| `VITE_MS_CLIENT_ID` | Microsoft (Teams) app registration client ID — **Mobile and desktop** (public client, no secret). |
+| `VITE_MS_TENANT` | Microsoft tenant/org ID. Must be a work/school org (not `common`); personal accounts can't read Teams chat. |
 
-The **Anthropic API key** is *not* an env var — enter it in the in-app Settings
-panel (stored in the local `settings.json` via `tauri-plugin-store`).
+**LLM provider API keys** are *not* env vars — enter them in the in-app Settings
+panel (stored locally in the `llm_providers` table).
 
 ---
 
@@ -89,6 +93,7 @@ panel (stored in the local `settings.json` via `tauri-plugin-store`).
 | `tauri-plugin-store` | Stores the Anthropic API key + current user id locally. |
 | `tauri-plugin-http` | Calls Anthropic & Google APIs from Rust transport (no browser CORS). |
 | `@choochmeque/tauri-plugin-google-auth` | Desktop Google OAuth (PKCE + loopback redirect + refresh). |
+| `tauri-plugin-oauth` | Loopback redirect listener for Microsoft (Teams) OAuth (PKCE flow runs in TS). |
 | `tauri-plugin-window-state` | Remembers the window position only. |
 
 ---
@@ -112,11 +117,67 @@ panel (stored in the local `settings.json` via `tauri-plugin-store`).
 
 ---
 
+## Microsoft Teams setup
+
+Teams reads your **1:1 direct messages and @mentions** through Microsoft Graph. This is a separate
+connection from Google, with its own app registration. It's **optional** — the app works without it.
+
+> **Work/school accounts only.** Microsoft Graph does **not** allow reading Teams chat messages with a
+> *personal* Microsoft account. The account you connect must be an organizational (Entra) one, and you
+> must register the app in that organization's directory.
+
+### 1. Create the app registration
+
+1. Go to the [Microsoft Entra admin center](https://entra.microsoft.com) (or the Azure Portal →
+   **Microsoft Entra ID**) → **App registrations** → **New registration**.
+2. **Name:** anything, e.g. `Personal Assistant`.
+3. **Supported account types:** *Accounts in this organizational directory only (single tenant)*.
+4. **Redirect URI:** choose platform **Public client/native (mobile & desktop)** and enter
+   `http://localhost`. (The app uses a loopback redirect on a dynamically chosen port; Microsoft
+   matches that against the bare `http://localhost`.)
+5. Click **Register**.
+
+### 2. Copy the IDs into `.env`
+
+On the app's **Overview** page, copy:
+
+| Portal field | `.env` variable |
+| --- | --- |
+| **Application (client) ID** | `VITE_MS_CLIENT_ID` |
+| **Directory (tenant) ID** | `VITE_MS_TENANT` |
+
+> Use the **tenant ID** (a GUID), not `common` — personal-account sign-in isn't supported here.
+
+### 3. Allow the public-client (PKCE) flow
+
+**Authentication** → scroll to **Advanced settings** → **Allow public client flows** → set to **Yes** →
+**Save**. (This app is a public client and uses PKCE with no client secret — so you do **not** create a
+client secret.)
+
+### 4. Add the API permissions
+
+**API permissions** → **Add a permission** → **Microsoft Graph** → **Delegated permissions**, then add:
+
+- `Chat.Read` — read your 1:1 and group chat messages
+- `User.Read` — identify the signed-in user (needed to match @mentions)
+- `offline_access` — issue a refresh token so the connection auto-renews
+- `openid`, `profile`, `email` — basic sign-in
+
+If your org requires it, click **Grant admin consent for &lt;org&gt;** (otherwise you'll be asked to
+consent the first time you connect).
+
+### 5. Connect in the app
+
+Run the app, open **Settings (⚙)**, and click **Connect Teams**. A browser window opens for Microsoft
+sign-in + consent; once you finish, the tokens are stored locally in `microsoft_tokens`.
+
+---
+
 ## Database schema
 
 Migrations live in `src-tauri/src/lib.rs` (declared to the SQL plugin; the
 queries themselves are all in `src/lib/*.ts`). Tables: `users`, `google_tokens`,
-`goals`, `memories`, `messages`, `briefings`.
+`microsoft_tokens`, `goals`, `memories`, `messages`, `briefings`.
 
 ---
 
@@ -129,7 +190,10 @@ src/
   lib/
     db.ts                 Database.load + typed query helpers
     auth.ts               Google sign-in, token upsert, getValidAccessToken()
+    msAuth.ts             Microsoft (Teams) OAuth: signInMicrosoft · getValidMsAccessToken
     google.ts             getTodayEvents · getPendingEmails · createEvent
+    teams.ts              getTeamsMessages (1:1 DMs + @mentions via Graph)
+    teamsTasks.ts         scanTeamsForTasks (extract Inbox task candidates from Teams)
     anthropic.ts          chat() → Anthropic Messages API (claude-sonnet-4-6)
     chat.ts               memory-aware prompt, persistence, fenced-block actions
     goals.ts memory.ts briefing.ts   CRUD wrappers over db.ts

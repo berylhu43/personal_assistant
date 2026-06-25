@@ -1,4 +1,7 @@
 import { chat } from "./anthropic";
+import { openaiCompatAdapter, type ProviderConfig } from "./llm";
+import { researchWithSearch } from "./gptSearch";
+import { getActiveProvider } from "./providers";
 import { saveGoal, setGoalGranularity, setGoalTaskTotal } from "./goals";
 import { createCommitment } from "./localCalendar";
 import { createPlan } from "./plans";
@@ -76,6 +79,12 @@ const PLAN_SYSTEM_NOSEARCH = `${PLAN_SYSTEM}
 
 NOTE: Web search is unavailable for this request. Build the plan from your own knowledge. Only include resource URLs you are highly confident exist (official docs, well-known repos); otherwise omit the "resources" array for that day. Never invent links.`;
 
+// GPT goes through the Responses API with a single combined prompt (no separate
+// system field). Cap the number of searches in-prompt to bound cost + latency.
+const PLAN_SYSTEM_GPT_SEARCH = `${PLAN_SYSTEM}
+
+Search the web AT MOST 3 times — be efficient, then write the plan.`;
+
 export interface PlanResult {
   ok: boolean;
   reply: string;
@@ -93,6 +102,77 @@ Target date: ${req.targetDate ?? "(pick a sensible span, ~2–4 weeks from today
 Return ONLY the JSON object.`;
 }
 
+// Unified intermediate produced by either provider branch: the draft plan text
+// (the JSON, which already embeds the real resource links the model found) plus
+// the list of verified source links, and whether live search actually ran. The
+// downstream (parse → store → download) consumes this and is provider-agnostic.
+interface PlanDraft {
+  text: string;
+  sources: { url: string; title: string }[];
+  usedSearch: boolean;
+}
+
+/**
+ * Claude branch: native web_search (unchanged behavior), with the existing
+ * no-search fallback. Claude embeds the real links it found directly in the JSON
+ * `resources`, so there is no separate citation list to surface here.
+ */
+async function fetchPlanDraftClaude(userMsg: string): Promise<PlanDraft> {
+  try {
+    console.log("[plan-debug] Claude chat(webSearch=true)…");
+    const text = await withTimeout(
+      chat([{ role: "user", content: userMsg }], PLAN_SYSTEM, PLAN_MAX_TOKENS, {
+        webSearch: true,
+      }),
+      SEARCH_TIMEOUT_MS,
+      "web-search plan request"
+    );
+    return { text, sources: [], usedSearch: true };
+  } catch (e) {
+    console.error("[plan-debug] Claude web-search failed — no-search fallback:", e);
+    const text = await withTimeout(
+      chat([{ role: "user", content: userMsg }], PLAN_SYSTEM_NOSEARCH, PLAN_MAX_TOKENS),
+      NOSEARCH_TIMEOUT_MS,
+      "plan request"
+    );
+    return { text, sources: [], usedSearch: false };
+  }
+}
+
+/**
+ * GPT branch: OpenAI Responses API web_search (returns real url_citations), with
+ * a no-search Chat Completions fallback.
+ */
+async function fetchPlanDraftGpt(
+  userMsg: string,
+  cfg: ProviderConfig
+): Promise<PlanDraft> {
+  try {
+    console.log("[plan-debug] GPT Responses web_search…");
+    const r = await withTimeout(
+      researchWithSearch(`${PLAN_SYSTEM_GPT_SEARCH}\n\n${userMsg}`, cfg),
+      SEARCH_TIMEOUT_MS,
+      "web-search plan request"
+    );
+    return { text: r.text, sources: r.sources, usedSearch: true };
+  } catch (e) {
+    console.error("[plan-debug] GPT web-search failed — no-search fallback:", e);
+    const r = await withTimeout(
+      openaiCompatAdapter.complete(
+        {
+          system: PLAN_SYSTEM_NOSEARCH,
+          messages: [{ role: "user", content: userMsg }],
+          maxTokens: PLAN_MAX_TOKENS,
+        },
+        cfg
+      ),
+      NOSEARCH_TIMEOUT_MS,
+      "plan request"
+    );
+    return { text: r.text, sources: [], usedSearch: false };
+  }
+}
+
 /**
  * The dedicated plan path: web-search the topic, generate a fixed structure,
  * persist a goal + daily commitments + the full plan document. Resilient by
@@ -105,49 +185,61 @@ export async function generatePlan(
   req: PendingPlan
 ): Promise<PlanResult> {
   console.log("[plan-debug] generatePlan start", req);
+
+  // ---- Gate: the study-plan feature requires a search-capable provider ----
+  const provider = await getActiveProvider();
+  if (!provider || !provider.api_key) {
+    return {
+      ok: false,
+      reply: "Add your model's API key in Settings to build study plans.",
+    };
+  }
+  if (provider.supports_web_search !== 1) {
+    // DeepSeek / Qwen: no native web search → do not run.
+    return {
+      ok: false,
+      reply:
+        "The study-plan feature needs web search. Please switch to Claude or GPT in Settings.",
+    };
+  }
+
   const userMsg = buildUserMsg(req);
 
-  let raw: string;
-  let usedSearch = true;
+  // ---- Branch by provider (the ONLY provider-specific part) ----
+  const gptCfg: ProviderConfig | null =
+    provider.id === "openai"
+      ? {
+          id: provider.id,
+          apiFormat: "openai_compatible",
+          baseUrl: provider.base_url,
+          model: provider.default_model,
+          apiKey: provider.api_key as string,
+        }
+      : null;
 
+  let draft: PlanDraft;
   try {
-    console.log("[plan-debug] calling chat(webSearch=true, 4096)…");
-    raw = await withTimeout(
-      chat([{ role: "user", content: userMsg }], PLAN_SYSTEM, PLAN_MAX_TOKENS, {
-        webSearch: true,
-      }),
-      SEARCH_TIMEOUT_MS,
-      "web-search plan request"
-    );
-    console.log("[plan-debug] web-search chat returned, length", raw.length);
-  } catch (e) {
-    console.error(
-      "[plan-debug] web-search path failed — falling back to no-search:",
-      e
-    );
-    usedSearch = false;
-    try {
-      console.log("[plan-debug] calling chat(no search, 4096)…");
-      raw = await withTimeout(
-        chat(
-          [{ role: "user", content: userMsg }],
-          PLAN_SYSTEM_NOSEARCH,
-          PLAN_MAX_TOKENS
-        ),
-        NOSEARCH_TIMEOUT_MS,
-        "plan request"
-      );
-      console.log("[plan-debug] no-search chat returned, length", raw.length);
-    } catch (e2) {
-      console.error("[plan-debug] no-search path also failed:", e2);
-      return {
-        ok: false,
-        reply: `I couldn't build the plan — ${
-          (e2 as Error)?.message ?? "the request failed"
-        }. Please try again in a moment.`,
-      };
-    }
+    draft = gptCfg
+      ? await fetchPlanDraftGpt(userMsg, gptCfg)
+      : await fetchPlanDraftClaude(userMsg);
+  } catch (e2) {
+    console.error("[plan-debug] plan generation failed:", e2);
+    return {
+      ok: false,
+      reply: `I couldn't build the plan — ${
+        (e2 as Error)?.message ?? "the request failed"
+      }. Please try again in a moment.`,
+    };
   }
+
+  // ---- Shared downstream (identical for both providers) ----
+  const { text: raw, sources, usedSearch } = draft;
+  console.log("[plan-debug] draft ready:", {
+    provider: provider.id,
+    usedSearch,
+    sources: sources.length,
+    length: raw.length,
+  });
 
   let parsed: any;
   try {

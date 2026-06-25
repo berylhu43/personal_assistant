@@ -17,6 +17,7 @@ const KEY_LOCAL_USER = "local_user_id";
 const KEY_CONSOLIDATED = "data_consolidated_v1";
 const KEY_RELATIVE_PURGED = "memories_purged_relative_v1";
 const KEY_TITLES_CLEANED = "titles_deemojified_v1";
+const KEY_PROVIDER_KEY_MIGRATED = "provider_key_migrated_v1";
 const KEY_PENDING_PLAN = "pending_plan";
 
 export async function getApiKey(): Promise<string | null> {
@@ -72,6 +73,18 @@ export async function areTitlesCleaned(): Promise<boolean> {
 export async function setTitlesCleaned(): Promise<void> {
   const s = await store();
   await s.set(KEY_TITLES_CLEANED, true);
+}
+
+/** Whether the one-time copy of the settings.json Anthropic key into the
+ * llm_providers table has already run. */
+export async function isProviderKeyMigrated(): Promise<boolean> {
+  const s = await store();
+  return (await s.get<boolean>(KEY_PROVIDER_KEY_MIGRATED)) === true;
+}
+
+export async function setProviderKeyMigrated(): Promise<void> {
+  const s = await store();
+  await s.set(KEY_PROVIDER_KEY_MIGRATED, true);
 }
 
 /** A learning-plan request the assistant asked the user to confirm. */
