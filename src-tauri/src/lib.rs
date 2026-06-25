@@ -268,6 +268,25 @@ VALUES
 ON CONFLICT(id) DO NOTHING;
 "#,
         },
+        Migration {
+            version: 10,
+            description: "free-form detail note on goals and tasks",
+            kind: MigrationKind::Up,
+            // Free-form, user-editable detail (how-to + links) for manually
+            // created goals/tasks — the manual analog of the LLM plan detail.
+            sql: r#"
+ALTER TABLE goals ADD COLUMN note TEXT;
+ALTER TABLE calendar ADD COLUMN note TEXT;
+"#,
+        },
+        Migration {
+            version: 11,
+            description: "goal start date",
+            kind: MigrationKind::Up,
+            sql: r#"
+ALTER TABLE goals ADD COLUMN start_date TEXT;
+"#,
+        },
     ]
 }
 

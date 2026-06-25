@@ -449,7 +449,11 @@ export default function App() {
                       <span className="eyebrow">Goals</span>
                     </div>
                     <div className="rise" style={{ animationDelay: "150ms" }}>
-                      <GoalTracker userId={user.id} refreshKey={goalsRefresh} />
+                      <GoalTracker
+                        userId={user.id}
+                        refreshKey={goalsRefresh}
+                        onTasksChanged={() => setCalendarRefresh((n) => n + 1)}
+                      />
                     </div>
                   </>
                 )}

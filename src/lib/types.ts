@@ -47,9 +47,11 @@ export interface GoalRow {
   progress: number;
   done: number; // 0 | 1
   plan: string | null; // JSON
+  start_date: string | null; // optional YYYY-MM-DD
   target_date: string | null; // optional YYYY-MM-DD
   task_total: number; // # of linked tasks (0 = manual progress)
   granularity: string; // 'daily' | 'weekly'
+  note: string | null; // free-form user detail (how-to + links)
   created_at: string;
 }
 
@@ -89,6 +91,7 @@ export interface CommitmentRow {
   done: number; // 0 | 1
   goal_id: string | null; // links a daily task to its goal
   span: string | null; // 'week' = weekly task; NULL = daily/one-off
+  note: string | null; // free-form user detail (how-to + links)
   created_at: string;
 }
 
@@ -100,9 +103,11 @@ export interface Goal {
   progress: number;
   done: boolean;
   plan: WeeklyPlanItem[] | null;
+  startDate: string | null; // optional YYYY-MM-DD
   targetDate: string | null; // optional YYYY-MM-DD
   taskTotal: number; // # of linked tasks (0 = manual progress)
   granularity: "daily" | "weekly";
+  note: string | null; // free-form user detail (how-to + links)
   createdAt: string;
 }
 
@@ -154,6 +159,7 @@ export interface Commitment {
   source: string | null;
   goalId: string | null; // links a daily task to its goal
   span: "week" | null; // 'week' = weekly task; null = daily/one-off
+  note: string | null; // free-form user detail (how-to + links)
   createdAt: string;
 }
 

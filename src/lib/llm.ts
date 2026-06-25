@@ -127,6 +127,16 @@ function maxTokensField(cfg: ProviderConfig): string {
   return cfg.id === "openai" ? "max_completion_tokens" : "max_tokens";
 }
 
+// GPT-5.x are reasoning models whose default effort ("medium") spends much of the
+// token budget on hidden reasoning before answering — which starves the visible
+// output at our budgets (1024–2048) and is a different profile from Claude
+// Sonnet. Forcing a LOW reasoning effort makes GPT behave like a fast, balanced
+// workhorse (closest to Sonnet) and frees the budget for output. Only OpenAI
+// accepts `reasoning_effort`; DeepSeek/Qwen reject it, so this is openai-only.
+function openaiExtraParams(cfg: ProviderConfig): Record<string, unknown> {
+  return cfg.id === "openai" ? { reasoning_effort: "low" } : {};
+}
+
 async function openaiChatCompletion(
   cfg: ProviderConfig,
   body: Record<string, unknown>
@@ -159,6 +169,7 @@ export const openaiCompatAdapter: LLMAdapter = {
       model: cfg.model,
       [maxTokensField(cfg)]: req.maxTokens,
       messages,
+      ...openaiExtraParams(cfg),
     });
     return { text: data.choices?.[0]?.message?.content ?? "" };
   },
@@ -175,6 +186,7 @@ export const openaiCompatAdapter: LLMAdapter = {
       [maxTokensField(cfg)]: req.maxTokens,
       messages,
       response_format: { type: "json_object" },
+      ...openaiExtraParams(cfg),
     });
     const text = data.choices?.[0]?.message?.content ?? "";
     return parseJsonLoose<T>(text);

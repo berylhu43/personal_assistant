@@ -150,18 +150,19 @@ append-only and run exactly once each — **never edit an existing migration; ad
 | --- | --- |
 | `users` | The single local user (stable local id; Google email/name are display labels only). |
 | `google_tokens` | `access_token`, `refresh_token` (NOT NULL — empty string allowed), `expires_at`. One row per user. |
-| `goals` | Todolist goals: progress, done, plan, target_date, task_total, granularity. |
+| `goals` | Todolist goals: progress, done, plan, start_date, target_date, task_total, granularity, note (free-form detail). |
 | `memories` | Durable facts/preferences (`kind`, `content`, `source`). |
 | `messages` | Full chat history (role, content). |
 | `briefings` | One daily briefing per `(user_id, date)`. |
-| `calendar` | Local commitments NOT synced to Google (date, time, source, done, goal_id, span). |
+| `calendar` | Local commitments NOT synced to Google (date, time, source, done, goal_id, span, note). |
 | `plans` | Learning/weekly plan documents linked to a goal. |
 | `inbox_scans` | Cached daily inbox-task scan per `(user_id, date)`. |
 | `microsoft_tokens` | Microsoft (Teams/Graph) OAuth tokens. Same shape/convention as `google_tokens`. |
 | `llm_providers` | Configurable LLM providers (Claude/GPT/DeepSeek/Qwen): api_format, base_url, default_model, api_key, supports_web_search, is_active. Exactly one row `is_active = 1`. |
 
 Migration versions so far: 1 initial · 2 calendar · 3 goal target_date · 4 task↔goal link · 5 weekly
-granularity · 6 plans · 7 inbox_scans · 8 microsoft_tokens · 9 llm_providers. **Next migration = version 10.**
+granularity · 6 plans · 7 inbox_scans · 8 microsoft_tokens · 9 llm_providers · 10 goal/task detail note ·
+11 goal start_date. **Next migration = version 12.**
 
 ---
 
@@ -295,7 +296,7 @@ platform (Entra) + Microsoft Graph, not Google OAuth.
 - **Run inside Tauri** (`npm run tauri dev`), never plain Vite — DB calls fail otherwise.
 - **TS owns logic; Rust is the shell.** Resist adding logic to Rust.
 - **Migrations are append-only and versioned.** SQLite has no `ADD COLUMN IF NOT EXISTS`; rely on the
-  version guard. Next is version 10.
+  version guard. Next is version 12.
 - **Local identity vs. Google identity are separate.** The app keys everything off a stable local
   user id (`store.ts` / `ensureLocalUser`); Google email/name are display labels only — never use them
   as ownership keys.
@@ -307,7 +308,7 @@ platform (Entra) + Microsoft Graph, not Google OAuth.
   check for newer before downgrading).
 
 ## 10. Where to start for common tasks
-- New table/column → add migration v10 in `src-tauri/src/lib.rs`, then queries in the relevant
+- New table/column → add migration v12 in `src-tauri/src/lib.rs`, then queries in the relevant
   `src/lib/*.ts`, then types in `types.ts`.
 - New chat capability → extend `buildSystemPrompt` + `parseBlocks`/`runChatTurn` in `chat.ts`.
 - New Google API call → add to `google.ts`, auth via `getValidAccessToken()`.

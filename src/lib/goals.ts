@@ -29,9 +29,11 @@ function rowToGoal(r: GoalRow): Goal {
     progress: r.progress,
     done: r.done === 1,
     plan,
+    startDate: r.start_date ?? null,
     targetDate: r.target_date,
     taskTotal: r.task_total,
     granularity: r.granularity === "weekly" ? "weekly" : "daily",
+    note: r.note ?? null,
     createdAt: r.created_at,
   };
 }
@@ -53,20 +55,62 @@ export async function createGoal(input: {
   userId: string;
   title: string;
   plan?: WeeklyPlanItem[] | null;
+  startDate?: string | null;
   targetDate?: string | null;
+  note?: string | null;
 }): Promise<string> {
   const id = uid();
   await execute(
-    `INSERT INTO goals (id, user_id, title, plan, target_date) VALUES (?1, ?2, ?3, ?4, ?5)`,
+    `INSERT INTO goals (id, user_id, title, plan, start_date, target_date, note)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
     [
       id,
       input.userId,
       stripEmoji(input.title),
       input.plan ? JSON.stringify(input.plan) : null,
+      input.startDate ?? null,
       input.targetDate ?? null,
+      input.note?.trim() ? input.note.trim() : null,
     ]
   );
   return id;
+}
+
+/**
+ * Edit a manually-managed goal's title, target date, and/or detail note. Only
+ * the provided fields are changed (undefined = leave as-is; null clears a value).
+ */
+export async function updateGoal(
+  id: string,
+  fields: {
+    title?: string;
+    startDate?: string | null;
+    targetDate?: string | null;
+    note?: string | null;
+  }
+): Promise<void> {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  let i = 1;
+  if (fields.title !== undefined) {
+    sets.push(`title = ?${i++}`);
+    params.push(stripEmoji(fields.title));
+  }
+  if (fields.startDate !== undefined) {
+    sets.push(`start_date = ?${i++}`);
+    params.push(fields.startDate || null);
+  }
+  if (fields.targetDate !== undefined) {
+    sets.push(`target_date = ?${i++}`);
+    params.push(fields.targetDate || null);
+  }
+  if (fields.note !== undefined) {
+    sets.push(`note = ?${i++}`);
+    params.push(fields.note?.trim() ? fields.note.trim() : null);
+  }
+  if (sets.length === 0) return;
+  params.push(id);
+  await execute(`UPDATE goals SET ${sets.join(", ")} WHERE id = ?${i}`, params);
 }
 
 /**
