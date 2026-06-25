@@ -7,10 +7,11 @@ import {
   setCommitmentDone,
   deleteCommitment,
 } from "../lib/localCalendar";
-import { getPlanByGoal } from "../lib/plans";
+import { getPlanByGoal, savePlanDay } from "../lib/plans";
 import { openExternal } from "../lib/openExternal";
 import LinkifiedText from "./LinkifiedText";
 import PencilIcon from "./PencilIcon";
+import PlanDayEditor from "./PlanDayEditor";
 import type { Commitment, PlanDay } from "../lib/types";
 
 function todayKey(): string {
@@ -86,6 +87,9 @@ export default function LocalCalendar({
   const [eDate, setEDate] = useState("");
   const [eTime, setETime] = useState("");
   const [eNote, setENote] = useState("");
+  // When the edited task is backed by a plan-day, edit that rich detail instead.
+  const [editPlanDay, setEditPlanDay] = useState<PlanDay | null>(null);
+  const [editGoalId, setEditGoalId] = useState<string | null>(null);
 
   /** A task is expandable if it has a note or a linked plan day. */
   function expandable(c: Commitment): boolean {
@@ -180,12 +184,44 @@ export default function LocalCalendar({
     refresh();
   }
 
-  function startEdit(c: Commitment) {
+  // Fetch the plan-day that backs a goal-linked task (matched by date), if any.
+  async function getPlanDayFor(c: Commitment): Promise<PlanDay | null> {
+    if (!c.goalId) return null;
+    let days = docCache.current.get(c.goalId);
+    if (!days) {
+      try {
+        const row = await getPlanByGoal(c.goalId);
+        const parsed = row ? (JSON.parse(row.content) as PlanDay[]) : [];
+        days = Array.isArray(parsed) ? parsed : [];
+        docCache.current.set(c.goalId, days);
+      } catch {
+        days = [];
+      }
+    }
+    return days.find((d) => d.date === c.date) ?? null;
+  }
+
+  async function startEdit(c: Commitment) {
     setEditingId(c.id);
     setETitle(c.title);
     setEDate(c.date);
     setETime(c.time ?? "");
     setENote(c.note ?? "");
+    setEditPlanDay(null);
+    setEditGoalId(null);
+    // If this task is backed by a plan-day (study plan), edit that rich detail
+    // (description + practice + links) instead of just the note.
+    const day = await getPlanDayFor(c);
+    if (day && c.goalId) {
+      setEditPlanDay(day);
+      setEditGoalId(c.goalId);
+    }
+  }
+
+  function cancelEdit() {
+    setEditingId(null);
+    setEditPlanDay(null);
+    setEditGoalId(null);
   }
 
   async function saveEdit(c: Commitment) {
@@ -198,6 +234,18 @@ export default function LocalCalendar({
     });
     setEditingId(null);
     refresh();
+  }
+
+  // Save the plan-day detail edited from a task: rewrite the plan doc + sync the
+  // task (shared helper), invalidate caches so both panels show the new detail.
+  async function savePlanDayFromTask(next: PlanDay) {
+    if (!editGoalId || !editPlanDay) return;
+    await savePlanDay(editGoalId, editPlanDay.date, next);
+    docCache.current.delete(editGoalId);
+    setDayById({});
+    cancelEdit();
+    refresh();
+    onTaskToggled?.(); // let the goals panel pick up the change too
   }
 
   async function add(e: React.FormEvent) {
@@ -226,6 +274,18 @@ export default function LocalCalendar({
 
   function renderTask(c: Commitment) {
     if (editingId === c.id) {
+      // Plan-backed task: edit the rich plan-day detail (description + links).
+      if (editPlanDay) {
+        return (
+          <li key={c.id}>
+            <PlanDayEditor
+              day={editPlanDay}
+              onSave={(next) => void savePlanDayFromTask(next)}
+              onCancel={cancelEdit}
+            />
+          </li>
+        );
+      }
       return (
         <li key={c.id}>
           <div className="space-y-1.5 rounded-lg border border-gold/40 bg-gold/5 p-2">
@@ -365,7 +425,7 @@ export default function LocalCalendar({
           )}
         </div>
         <button
-          onClick={() => startEdit(c)}
+          onClick={() => void startEdit(c)}
           aria-label="Edit task"
           className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ink/35 opacity-0 transition hover:bg-ink/5 hover:text-gold-deep group-hover:opacity-100"
         >

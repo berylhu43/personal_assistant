@@ -15,17 +15,12 @@ import {
   updateCommitment,
   setTasksDoneByGoal,
 } from "../lib/localCalendar";
-import { getPlanByGoal, updatePlanContent } from "../lib/plans";
+import { getPlanByGoal, savePlanDay } from "../lib/plans";
 import { openExternal } from "../lib/openExternal";
 import LinkifiedText from "./LinkifiedText";
 import PencilIcon from "./PencilIcon";
-import type { Goal, PlanDay, PlanResource, Commitment } from "../lib/types";
-
-interface DraftResource {
-  kind: string;
-  title: string;
-  url: string;
-}
+import PlanDayEditor from "./PlanDayEditor";
+import type { Goal, PlanDay, Commitment } from "../lib/types";
 
 // On completion, an item shows its green/crossed state, then fades out and is
 // removed — so checking it off feels deliberate rather than an instant vanish.
@@ -114,16 +109,10 @@ export default function GoalTracker({
   const [teNote, setTeNote] = useState("");
 
   // ---- Inline edit state for an LLM plan-document day (one at a time) ----
-  // pdKey is `${goalId}|${originalDate}` so we can locate the day to replace.
+  // pdKey is `${goalId}|${originalDate}` so we can locate the day being edited.
   const [pdKey, setPdKey] = useState<string | null>(null);
   const [pdGoalId, setPdGoalId] = useState("");
-  const [pdOrigDate, setPdOrigDate] = useState("");
-  const [pdDate, setPdDate] = useState("");
-  const [pdTopic, setPdTopic] = useState("");
-  const [pdTask, setPdTask] = useState("");
-  const [pdPractice, setPdPractice] = useState("");
-  const [pdEst, setPdEst] = useState("");
-  const [pdResources, setPdResources] = useState<DraftResource[]>([]);
+  const [pdDay, setPdDay] = useState<PlanDay | null>(null);
 
   async function toggleOpen(goal: Goal) {
     const willOpen = openPlan !== goal.id;
@@ -255,74 +244,19 @@ export default function GoalTracker({
   function startDayEdit(goalId: string, d: PlanDay) {
     setPdKey(`${goalId}|${d.date}`);
     setPdGoalId(goalId);
-    setPdOrigDate(d.date);
-    setPdDate(d.date);
-    setPdTopic(d.topic ?? "");
-    setPdTask(d.task ?? "");
-    setPdPractice(d.practice ?? "");
-    setPdEst(d.est_time ?? "");
-    setPdResources(
-      (d.resources ?? []).map((r) => ({
-        kind: r.kind ?? "doc",
-        title: r.title ?? "",
-        url: r.url ?? "",
-      }))
-    );
-  }
-
-  function setResource(i: number, field: "title" | "url", value: string) {
-    setPdResources((prev) =>
-      prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r))
-    );
+    setPdDay(d);
   }
 
   /**
-   * Save an edited plan day: rewrite the plan JSON AND sync the matching daily
-   * task (commitment, joined by date) so the change reflects in Upcoming too.
+   * Save an edited plan day via the shared helper (rewrites the plan JSON AND
+   * syncs the matching daily task), then refresh this goal's cached plan doc.
    */
-  async function saveDayEdit() {
-    const goalId = pdGoalId;
-    const origDate = pdOrigDate;
-    const row = await getPlanByGoal(goalId);
-    if (!row) {
-      setPdKey(null);
-      return;
-    }
-    let days: PlanDay[] = [];
-    try {
-      const parsed = JSON.parse(row.content);
-      days = Array.isArray(parsed) ? parsed : [];
-    } catch {
-      days = [];
-    }
-    const resources: PlanResource[] = pdResources
-      .filter((r) => r.title.trim() || r.url.trim())
-      .map((r) => ({ kind: r.kind || "doc", title: r.title.trim(), url: r.url.trim() }));
-    const newDay: PlanDay = {
-      date: pdDate || origDate,
-      topic: pdTopic,
-      task: pdTask,
-      practice: pdPractice || undefined,
-      est_time: pdEst || undefined,
-      resources: resources.length ? resources : undefined,
-    };
-    const idx = days.findIndex((d) => d.date === origDate);
-    if (idx >= 0) days[idx] = newDay;
-    else days.push(newDay);
-    days.sort((a, b) => a.date.localeCompare(b.date));
-
-    await updatePlanContent(row.id, JSON.stringify(days));
-
-    // Keep the linked daily task (matched by the old date) in sync.
-    const tasks = await listByGoal(goalId);
-    const c = tasks.find((t) => t.date === origDate);
-    if (c) {
-      const title = (newDay.topic || newDay.task || c.title).slice(0, 120);
-      await updateCommitment(c.id, { title, date: newDay.date });
-    }
-
-    setPlanDocs((m) => ({ ...m, [goalId]: days }));
+  async function saveDayEdit(next: PlanDay) {
+    if (!pdDay) return;
+    const days = await savePlanDay(pdGoalId, pdDay.date, next);
+    setPlanDocs((m) => ({ ...m, [pdGoalId]: days }));
     setPdKey(null);
+    setPdDay(null);
     onTasksChanged?.();
   }
 
@@ -555,107 +489,17 @@ export default function GoalTracker({
                       {planDocs[goal.id]?.length ? (
                         <ul className="space-y-2">
                           {planDocs[goal.id].map((d, i) =>
-                            pdKey === `${goal.id}|${d.date}` ? (
-                              /* ---- Inline plan-day edit ---- */
+                            pdKey === `${goal.id}|${d.date}` && pdDay ? (
+                              /* ---- Inline plan-day edit (shared editor) ---- */
                               <li key={i}>
-                                <div className="space-y-1.5 rounded-md border border-gold/40 bg-gold/5 p-1.5">
-                                  <input
-                                    type="date"
-                                    value={pdDate}
-                                    onChange={(e) => setPdDate(e.target.value)}
-                                    className={`${dateClass} w-full`}
-                                  />
-                                  <input
-                                    value={pdTopic}
-                                    onChange={(e) => setPdTopic(e.target.value)}
-                                    placeholder="Topic"
-                                    className={inputClass}
-                                  />
-                                  <input
-                                    value={pdTask}
-                                    onChange={(e) => setPdTask(e.target.value)}
-                                    placeholder="Task"
-                                    className={inputClass}
-                                  />
-                                  <input
-                                    value={pdPractice}
-                                    onChange={(e) => setPdPractice(e.target.value)}
-                                    placeholder="Practice (optional)"
-                                    className={inputClass}
-                                  />
-                                  <input
-                                    value={pdEst}
-                                    onChange={(e) => setPdEst(e.target.value)}
-                                    placeholder="Est. time, e.g. 2h (optional)"
-                                    className={inputClass}
-                                  />
-                                  <div>
-                                    <span className="font-mono text-[10px] uppercase tracking-wide text-ink/45">
-                                      Resources
-                                    </span>
-                                    {pdResources.map((r, ri) => (
-                                      <div
-                                        key={ri}
-                                        className="mt-1 flex items-center gap-1.5"
-                                      >
-                                        <input
-                                          value={r.title}
-                                          onChange={(e) =>
-                                            setResource(ri, "title", e.target.value)
-                                          }
-                                          placeholder="Title"
-                                          className={`${inputClass} flex-1`}
-                                        />
-                                        <input
-                                          value={r.url}
-                                          onChange={(e) =>
-                                            setResource(ri, "url", e.target.value)
-                                          }
-                                          placeholder="https://…"
-                                          className={`${inputClass} flex-1`}
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setPdResources((prev) =>
-                                              prev.filter((_, x) => x !== ri)
-                                            )
-                                          }
-                                          aria-label="Remove resource"
-                                          className="shrink-0 font-mono text-ink/30 hover:text-ink/60"
-                                        >
-                                          ×
-                                        </button>
-                                      </div>
-                                    ))}
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setPdResources((prev) => [
-                                          ...prev,
-                                          { kind: "doc", title: "", url: "" },
-                                        ])
-                                      }
-                                      className="mt-1 font-mono text-[10px] uppercase tracking-wide text-gold-deep hover:underline"
-                                    >
-                                      + resource
-                                    </button>
-                                  </div>
-                                  <div className="flex items-center justify-end gap-3 pt-0.5">
-                                    <button
-                                      onClick={() => setPdKey(null)}
-                                      className="font-sans text-xs text-ink/50 transition hover:text-ink"
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button
-                                      onClick={() => void saveDayEdit()}
-                                      className="rounded-full bg-ink px-3 py-1 font-sans text-xs font-medium text-cream transition hover:bg-gold-deep"
-                                    >
-                                      Save
-                                    </button>
-                                  </div>
-                                </div>
+                                <PlanDayEditor
+                                  day={pdDay}
+                                  onSave={(next) => void saveDayEdit(next)}
+                                  onCancel={() => {
+                                    setPdKey(null);
+                                    setPdDay(null);
+                                  }}
+                                />
                               </li>
                             ) : (
                               /* ---- Read-only plan day ---- */

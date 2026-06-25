@@ -90,6 +90,9 @@ src/                         React + TS — ALL business logic
     LocalCalendar.tsx        Local (non-Google) commitments UI
     Archive.tsx              Completed goals/tasks (done=1) review + Restore + confirmed hard-delete.
                              Expanded-workbench modal only (header archive icon); sorts by created_at DESC.
+    PlanDayEditor.tsx        Shared inline editor for one plan-day (date/topic/task/practice/est/links),
+                             used by BOTH GoalTracker and LocalCalendar so plan-day editing is identical.
+    PencilIcon.tsx           Shared edit-pencil icon.
   lib/
     db.ts                    Database.load + typed helpers: select / selectOne / execute / uid / stripEmoji
     auth.ts                  Google OAuth: signIn, signOut, getCurrentUser, isGoogleConnected,
@@ -117,7 +120,8 @@ src/                         React + TS — ALL business logic
                              Branches: GPT → gptSearch.ts (Responses API); Claude → anthropic.ts
                              chat(webSearch). Both yield a unified PlanDraft; downstream is shared.
     gptSearch.ts             researchWithSearch — OpenAI Responses API web_search (study-plan, GPT only).
-    plans.ts                 plans table CRUD (createPlan, getPlanByGoal)
+    plans.ts                 plans table CRUD (createPlan, getPlanByGoal) + savePlanDay (edit one day +
+                             sync its linked task; shared by the goal-side and task-side editors)
     planExport.ts            planToMarkdown, downloadPlan (export a plan to a .md file)
     distill.ts               distillConversation — summarize chat into durable memories
     emailTasks.ts            scanInboxForTasks / getOrScanInbox / rescanInbox — cached daily inbox scan
