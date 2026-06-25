@@ -287,6 +287,33 @@ ALTER TABLE calendar ADD COLUMN note TEXT;
 ALTER TABLE goals ADD COLUMN start_date TEXT;
 "#,
         },
+        Migration {
+            version: 12,
+            description: "active-list indexes (keep filters fast as completed rows grow)",
+            kind: MigrationKind::Up,
+            // Indexes only — no data/schema/query changes. Composite indexes match
+            // the active-list query shapes so completed (done=1) rows are skipped
+            // entirely rather than scanned.
+            //
+            // calendar: every Upcoming/active task query is
+            //   WHERE user_id = ? AND done = 0 [AND date <range>] ORDER BY date ASC
+            // (user_id, done) equality then date range+order. Putting done before
+            // date physically separates done=1 rows so they're never scanned.
+            // The secondary ORDER BY COALESCE(time,...) is an expression, left to a
+            // tiny in-memory sort within equal dates (not worth an expression index).
+            //
+            // goals: listGoals is
+            //   WHERE user_id = ? ORDER BY done ASC, created_at DESC
+            // (no done filter in SQL — done goals are hidden in JS). The index
+            // matches the user_id seek + (done ASC, created_at DESC) ordering, so
+            // the scan avoids a filesort and reaches active goals first.
+            sql: r#"
+CREATE INDEX IF NOT EXISTS idx_calendar_user_done_date
+  ON calendar(user_id, done, date);
+CREATE INDEX IF NOT EXISTS idx_goals_user_done_created
+  ON goals(user_id, done, created_at DESC);
+"#,
+        },
     ]
 }
 

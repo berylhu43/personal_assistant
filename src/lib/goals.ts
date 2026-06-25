@@ -51,6 +51,19 @@ export async function getGoalById(id: string): Promise<Goal | null> {
   return row ? rowToGoal(row) : null;
 }
 
+/**
+ * Completed goals for the Archive view, newest-first BY CREATION (there is no
+ * completion-timestamp column). Filters done = 1 in SQL directly (not the JS
+ * visibleGoals path); served by the v12 (user_id, done, created_at) index.
+ */
+export async function listCompletedGoals(userId: string): Promise<Goal[]> {
+  const rows = await select<GoalRow>(
+    `SELECT * FROM goals WHERE user_id = ?1 AND done = 1 ORDER BY created_at DESC`,
+    [userId]
+  );
+  return rows.map(rowToGoal);
+}
+
 export async function createGoal(input: {
   userId: string;
   title: string;

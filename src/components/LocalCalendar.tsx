@@ -10,6 +10,7 @@ import {
 import { getPlanByGoal } from "../lib/plans";
 import { openExternal } from "../lib/openExternal";
 import LinkifiedText from "./LinkifiedText";
+import PencilIcon from "./PencilIcon";
 import type { Commitment, PlanDay } from "../lib/types";
 
 function todayKey(): string {
@@ -46,6 +47,11 @@ function formatWeek(weekStart: string): string {
   return `Week of ${formatDay(weekStart)} – ${formatDay(addDays(weekStart, 6))}`;
 }
 
+// On completion, a task shows its crossed-out state, then fades out and is
+// removed — matching the goals panel.
+const FADE_START_MS = 800;
+const REMOVE_MS = 1150;
+
 export default function LocalCalendar({
   userId,
   refreshKey,
@@ -59,6 +65,9 @@ export default function LocalCalendar({
   // Single (non-plan) commitments due later this week — surfaced so a one-off
   // due Thursday isn't hidden until the day before.
   const [later, setLater] = useState<Commitment[]>([]);
+  // Ids fading out just before removal (the opacity transition). Completing
+  // tasks stay rendered via their optimistic done flag until the removal refresh.
+  const [fadingIds, setFadingIds] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(todayKey());
@@ -140,10 +149,30 @@ export default function LocalCalendar({
   }, [items, later, expanded, dayById, loadDayDetail]);
 
   async function toggle(c: Commitment) {
-    await setCommitmentDone(c.id, !c.done);
-    refresh();
-    // A linked task may have moved its goal's progress — refresh the goals panel.
-    onTaskToggled?.();
+    if (c.done) {
+      await setCommitmentDone(c.id, false);
+      refresh();
+      onTaskToggled?.();
+      return;
+    }
+    // Optimistic cross-out, then linger → fade → remove.
+    const mark = (x: Commitment) => (x.id === c.id ? { ...x, done: true } : x);
+    setItems((prev) => prev.map(mark));
+    setLater((prev) => prev.map(mark));
+    await setCommitmentDone(c.id, true);
+    onTaskToggled?.(); // a linked task may move its goal's progress
+    window.setTimeout(
+      () => setFadingIds((p) => new Set(p).add(c.id)),
+      FADE_START_MS
+    );
+    window.setTimeout(() => {
+      setFadingIds((p) => {
+        const n = new Set(p);
+        n.delete(c.id);
+        return n;
+      });
+      refresh();
+    }, REMOVE_MS);
   }
 
   async function remove(id: string) {
@@ -251,7 +280,12 @@ export default function LocalCalendar({
     const overdue = isWeekly ? addDays(c.date, 6) < today : c.date < today;
     const canExpand = expandable(c);
     return (
-      <li key={c.id} className="group flex items-start gap-2.5">
+      <li
+        key={c.id}
+        className={`group flex items-start gap-2.5 transition-opacity duration-300 ${
+          fadingIds.has(c.id) ? "opacity-0" : ""
+        }`}
+      >
         <button
           onClick={() => toggle(c)}
           aria-label={c.done ? "Mark not done" : "Mark done"}
@@ -263,9 +297,9 @@ export default function LocalCalendar({
           <p
             onClick={() => void toggleExpand(c)}
             title={canExpand ? "Click to expand" : undefined}
-            className={`font-sans text-sm leading-snug text-ink ${
-              canExpand ? "cursor-pointer" : ""
-            } ${
+            className={`font-sans text-sm leading-snug ${
+              c.done ? "text-ink/40 line-through" : "text-ink"
+            } ${canExpand ? "cursor-pointer" : ""} ${
               expanded.has(c.id) ? "whitespace-normal break-words" : "truncate"
             }`}
           >
@@ -333,14 +367,14 @@ export default function LocalCalendar({
         <button
           onClick={() => startEdit(c)}
           aria-label="Edit task"
-          className="mt-0.5 shrink-0 font-mono text-[11px] leading-none text-ink/25 opacity-0 transition group-hover:opacity-100 hover:text-gold-deep"
+          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ink/35 opacity-0 transition hover:bg-ink/5 hover:text-gold-deep group-hover:opacity-100"
         >
-          ✎
+          <PencilIcon />
         </button>
         <button
           onClick={() => remove(c.id)}
           aria-label="Remove task"
-          className="mt-0.5 shrink-0 font-mono leading-none text-ink/25 opacity-0 transition group-hover:opacity-100 hover:text-ink/60"
+          className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-base leading-none text-ink/35 opacity-0 transition hover:bg-ink/5 hover:text-ink/70 group-hover:opacity-100"
         >
           ×
         </button>

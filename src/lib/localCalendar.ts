@@ -20,6 +20,18 @@ function rowToCommitment(r: CommitmentRow): Commitment {
   };
 }
 
+/**
+ * Completed tasks for the Archive view, newest-first BY CREATION (no completion
+ * timestamp exists). Served by the v12 (user_id, done, date) index.
+ */
+export async function listCompletedTasks(userId: string): Promise<Commitment[]> {
+  const rows = await select<CommitmentRow>(
+    `SELECT * FROM calendar WHERE user_id = ?1 AND done = 1 ORDER BY created_at DESC`,
+    [userId]
+  );
+  return rows.map(rowToCommitment);
+}
+
 /** All commitments linked to a goal, date-ascending (for the goal's detail view). */
 export async function listByGoal(goalId: string): Promise<Commitment[]> {
   const rows = await select<CommitmentRow>(
@@ -234,4 +246,15 @@ export async function setCommitmentDone(id: string, done: boolean): Promise<void
 
 export async function deleteCommitment(id: string): Promise<void> {
   await execute(`DELETE FROM calendar WHERE id = ?1`, [id]);
+}
+
+/** Mark every task linked to a goal done/undone (when the goal itself is). */
+export async function setTasksDoneByGoal(
+  goalId: string,
+  done: boolean
+): Promise<void> {
+  await execute(`UPDATE calendar SET done = ?1 WHERE goal_id = ?2`, [
+    done ? 1 : 0,
+    goalId,
+  ]);
 }

@@ -13,10 +13,12 @@ import {
   createCommitment,
   listByGoal,
   updateCommitment,
+  setTasksDoneByGoal,
 } from "../lib/localCalendar";
 import { getPlanByGoal, updatePlanContent } from "../lib/plans";
 import { openExternal } from "../lib/openExternal";
 import LinkifiedText from "./LinkifiedText";
+import PencilIcon from "./PencilIcon";
 import type { Goal, PlanDay, PlanResource, Commitment } from "../lib/types";
 
 interface DraftResource {
@@ -24,6 +26,11 @@ interface DraftResource {
   title: string;
   url: string;
 }
+
+// On completion, an item shows its green/crossed state, then fades out and is
+// removed — so checking it off feels deliberate rather than an instant vanish.
+const FADE_START_MS = 800;
+const REMOVE_MS = 1150;
 
 /** A goal has expandable detail if it has a note, a weekly plan, or linked tasks. */
 function hasDetails(g: Goal): boolean {
@@ -72,6 +79,10 @@ export default function GoalTracker({
   onTasksChanged?: () => void;
 }) {
   const [goals, setGoals] = useState<Goal[]>([]);
+  // Ids mid-completion: kept visible (crossed/green) during the linger, and
+  // fadingIds get the opacity transition just before removal.
+  const [completingIds, setCompletingIds] = useState<Set<string>>(new Set());
+  const [fadingIds, setFadingIds] = useState<Set<string>>(new Set());
   const [openPlan, setOpenPlan] = useState<string | null>(null);
   // Cache of loaded plan documents (LLM learning-plan goals) by goal id.
   const [planDocs, setPlanDocs] = useState<Record<string, PlanDay[]>>({});
@@ -316,8 +327,38 @@ export default function GoalTracker({
   }
 
   async function toggle(g: Goal) {
-    await setGoalDone(g.id, !g.done);
-    refresh();
+    if (g.done) {
+      // Un-completing (rare — completed goals are hidden after the linger).
+      await setGoalDone(g.id, false);
+      refresh();
+      return;
+    }
+    // Optimistic green + cross-out; complete the goal AND its linked tasks.
+    setGoals((prev) =>
+      prev.map((x) => (x.id === g.id ? { ...x, done: true, progress: 100 } : x))
+    );
+    setCompletingIds((p) => new Set(p).add(g.id));
+    await setGoalDone(g.id, true);
+    await setTasksDoneByGoal(g.id, true);
+    onTasksChanged?.(); // linked tasks drop out of Upcoming
+    // Linger → fade → remove.
+    window.setTimeout(
+      () => setFadingIds((p) => new Set(p).add(g.id)),
+      FADE_START_MS
+    );
+    window.setTimeout(() => {
+      setCompletingIds((p) => {
+        const n = new Set(p);
+        n.delete(g.id);
+        return n;
+      });
+      setFadingIds((p) => {
+        const n = new Set(p);
+        n.delete(g.id);
+        return n;
+      });
+      refresh();
+    }, REMOVE_MS);
   }
 
   async function progress(g: Goal, value: number) {
@@ -337,13 +378,23 @@ export default function GoalTracker({
   const dateClass =
     "selectable rounded-md border border-ink/20 bg-white/70 px-2 py-1 font-mono text-[11px] text-ink/70 transition focus:border-gold focus:outline-none";
 
+  // Hide completed goals once their linger ends (still in DB as done=1).
+  const visibleGoals = goals.filter(
+    (g) => !g.done || completingIds.has(g.id)
+  );
+
   return (
     <div>
       <ul className="space-y-3.5">
-        {goals.map((goal) => {
+        {visibleGoals.map((goal) => {
           const range = formatRange(goal.startDate, goal.targetDate);
           return (
-            <li key={goal.id} className="group">
+            <li
+              key={goal.id}
+              className={`group transition-opacity duration-300 ${
+                fadingIds.has(goal.id) ? "opacity-0" : ""
+              }`}
+            >
               {editingId === goal.id ? (
                 /* ---- Inline edit form ---- */
                 <div className="space-y-1.5 rounded-lg border border-gold/40 bg-gold/5 p-2">
@@ -435,14 +486,14 @@ export default function GoalTracker({
                     <button
                       onClick={() => startEdit(goal)}
                       aria-label="Edit goal"
-                      className="shrink-0 font-mono text-[11px] text-ink/30 opacity-0 transition group-hover:opacity-100 hover:text-gold-deep"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ink/35 opacity-0 transition hover:bg-ink/5 hover:text-gold-deep group-hover:opacity-100"
                     >
-                      ✎
+                      <PencilIcon />
                     </button>
                     <button
                       onClick={() => remove(goal.id)}
                       aria-label="Remove goal"
-                      className="shrink-0 font-mono text-ink/30 opacity-0 transition group-hover:opacity-100 hover:text-ink/60"
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-base leading-none text-ink/35 opacity-0 transition hover:bg-ink/5 hover:text-ink/70 group-hover:opacity-100"
                     >
                       ×
                     </button>
@@ -617,9 +668,9 @@ export default function GoalTracker({
                                   <button
                                     onClick={() => startDayEdit(goal.id, d)}
                                     aria-label="Edit day"
-                                    className="shrink-0 font-mono text-[11px] text-ink/30 opacity-0 transition group-hover/day:opacity-100 hover:text-gold-deep"
+                                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ink/35 opacity-0 transition hover:bg-ink/5 hover:text-gold-deep group-hover/day:opacity-100"
                                   >
-                                    ✎
+                                    <PencilIcon size={13} />
                                   </button>
                                 </p>
                                 {d.task && (
@@ -712,9 +763,9 @@ export default function GoalTracker({
                                   <button
                                     onClick={() => startTaskEdit(t)}
                                     aria-label="Edit task"
-                                    className="shrink-0 font-mono text-[11px] text-ink/30 opacity-0 transition group-hover/task:opacity-100 hover:text-gold-deep"
+                                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ink/35 opacity-0 transition hover:bg-ink/5 hover:text-gold-deep group-hover/task:opacity-100"
                                   >
-                                    ✎
+                                    <PencilIcon size={13} />
                                   </button>
                                 </p>
                                 {t.note && t.note.trim() && (
@@ -743,7 +794,7 @@ export default function GoalTracker({
             </li>
           );
         })}
-        {goals.length === 0 && (
+        {visibleGoals.length === 0 && (
           <li className="font-sans text-[13px] italic text-ink/35">
             No goals yet. Add one below, or ask the assistant.
           </li>

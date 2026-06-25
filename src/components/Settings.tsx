@@ -284,10 +284,10 @@ export default function Settings({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <div className="mt-6 flex items-center justify-end">
+        <div className="mt-8 flex items-center justify-end border-t border-ink/10 pt-5">
           <button
             onClick={onClose}
-            className="rounded-full bg-ink px-5 py-2 font-sans text-sm font-medium text-cream shadow-memo transition hover:bg-gold-deep"
+            className="rounded-full bg-ink px-6 py-2 font-sans text-sm font-medium text-cream shadow-memo transition hover:bg-gold-deep"
           >
             Done
           </button>

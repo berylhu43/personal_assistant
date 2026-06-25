@@ -88,6 +88,8 @@ src/                         React + TS — ALL business logic
     Settings.tsx             Multi-provider key mgmt (set key, pick active, test connection, get-a-key
                              links) + Microsoft Teams connect/disconnect
     LocalCalendar.tsx        Local (non-Google) commitments UI
+    Archive.tsx              Completed goals/tasks (done=1) review + Restore + confirmed hard-delete.
+                             Expanded-workbench modal only (header archive icon); sorts by created_at DESC.
   lib/
     db.ts                    Database.load + typed helpers: select / selectOne / execute / uid / stripEmoji
     auth.ts                  Google OAuth: signIn, signOut, getCurrentUser, isGoogleConnected,
@@ -162,7 +164,7 @@ append-only and run exactly once each — **never edit an existing migration; ad
 
 Migration versions so far: 1 initial · 2 calendar · 3 goal target_date · 4 task↔goal link · 5 weekly
 granularity · 6 plans · 7 inbox_scans · 8 microsoft_tokens · 9 llm_providers · 10 goal/task detail note ·
-11 goal start_date. **Next migration = version 12.**
+11 goal start_date · 12 active-list indexes. **Next migration = version 13.**
 
 ---
 
@@ -296,7 +298,7 @@ platform (Entra) + Microsoft Graph, not Google OAuth.
 - **Run inside Tauri** (`npm run tauri dev`), never plain Vite — DB calls fail otherwise.
 - **TS owns logic; Rust is the shell.** Resist adding logic to Rust.
 - **Migrations are append-only and versioned.** SQLite has no `ADD COLUMN IF NOT EXISTS`; rely on the
-  version guard. Next is version 12.
+  version guard. Next is version 13.
 - **Local identity vs. Google identity are separate.** The app keys everything off a stable local
   user id (`store.ts` / `ensureLocalUser`); Google email/name are display labels only — never use them
   as ownership keys.
@@ -308,7 +310,7 @@ platform (Entra) + Microsoft Graph, not Google OAuth.
   check for newer before downgrading).
 
 ## 10. Where to start for common tasks
-- New table/column → add migration v12 in `src-tauri/src/lib.rs`, then queries in the relevant
+- New table/column → add migration v13 in `src-tauri/src/lib.rs`, then queries in the relevant
   `src/lib/*.ts`, then types in `types.ts`.
 - New chat capability → extend `buildSystemPrompt` + `parseBlocks`/`runChatTurn` in `chat.ts`.
 - New Google API call → add to `google.ts`, auth via `getValidAccessToken()`.
