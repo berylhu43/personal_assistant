@@ -31,6 +31,9 @@ function formatDue(date: string): string {
 
 interface UIMessage extends ChatMessage {
   id: string;
+  // When set, this assistant message carries a completed study plan and renders
+  // a "Download plan" action inline (so it scrolls with the conversation).
+  planGoalId?: string | null;
 }
 
 export default function ChatPanel({
@@ -88,6 +91,29 @@ export default function ChatPanel({
       behavior: "smooth",
     });
   }, [messages, sending, planning, planResult, fileItems, attaching]);
+
+  // When a plan finishes (App-driven, survives collapse), append it as a normal
+  // assistant message so it takes its chronological place and scrolls up as the
+  // conversation continues — rather than staying pinned to the bottom.
+  //
+  // Seed the ref with the planResult present AT MOUNT so a plan from a previous
+  // (collapsed-then-reopened) session is NOT re-appended — only a plan that
+  // completes during this open session gets added.
+  const appliedPlanRef = useRef<typeof planResult>(planResult);
+  useEffect(() => {
+    if (planResult && planResult !== appliedPlanRef.current) {
+      appliedPlanRef.current = planResult;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: planResult.reply,
+          planGoalId: planResult.goalId,
+        },
+      ]);
+    }
+  }, [planResult]);
 
   async function send() {
     if (sending || attaching) return;
@@ -342,8 +368,18 @@ export default function ChatPanel({
             </div>
           ) : (
             <div key={m.id} className="flex justify-start">
-              <div className="max-w-[88%] whitespace-pre-wrap rounded-2xl rounded-bl-md border border-ink/10 bg-paper/80 px-3.5 py-2 font-sans text-sm leading-relaxed text-ink shadow-memo">
-                {m.content}
+              <div className="max-w-[88%] rounded-2xl rounded-bl-md border border-ink/10 bg-paper/80 px-3.5 py-2 shadow-memo">
+                <p className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink">
+                  {m.content}
+                </p>
+                {m.planGoalId && (
+                  <button
+                    onClick={() => void downloadPlan(m.planGoalId!)}
+                    className="mt-2 rounded-full bg-ink px-3 py-1 font-sans text-[11px] font-medium text-cream transition hover:bg-gold-deep"
+                  >
+                    Download plan
+                  </button>
+                )}
               </div>
             </div>
           )
@@ -420,24 +456,6 @@ export default function ChatPanel({
           </div>
         )}
 
-        {/* Completed plan: message + Download control */}
-        {!planning && planResult && (
-          <div className="flex justify-start">
-            <div className="max-w-[88%] rounded-2xl rounded-bl-md border border-ink/10 bg-paper/80 px-3.5 py-2 shadow-memo">
-              <p className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-ink">
-                {planResult.reply}
-              </p>
-              {planResult.goalId && (
-                <button
-                  onClick={() => void downloadPlan(planResult.goalId!)}
-                  className="mt-2 rounded-full bg-ink px-3 py-1 font-sans text-[11px] font-medium text-cream transition hover:bg-gold-deep"
-                >
-                  Download plan
-                </button>
-              )}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="no-drag border-t border-ink/10 bg-paper/50 px-4 py-3">

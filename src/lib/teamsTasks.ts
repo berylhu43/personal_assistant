@@ -1,5 +1,5 @@
 import { getTeamsMessages } from "./teams";
-import { chat } from "./anthropic";
+import { getActiveAdapter, LLMParseError } from "./llm";
 import { listUpcoming } from "./localCalendar";
 import { listGoals } from "./goals";
 import type { InboxTaskCandidate } from "./types";
@@ -30,11 +30,6 @@ Rules:
 - Do NOT suggest anything already in the ALREADY SAVED list (same underlying thing, regardless of wording or exact date).
 - When unsure whether something is a real task, OMIT it. An empty array is fine.
 - The "title" must be PLAIN TEXT — never include emoji, icons, or decorative symbols.`;
-
-function tryParse(raw: string): any {
-  const match = raw.match(/\{[\s\S]*\}/);
-  return JSON.parse(match ? match[0] : raw);
-}
 
 /**
  * Fetch recent Teams DMs/@mentions and extract task CANDIDATES via a single
@@ -78,13 +73,20 @@ ${blocks}
 
 Extract the actionable task candidates as JSON now.`;
 
-  const raw = await chat([{ role: "user", content: userMsg }], SCAN_SYSTEM, 1024);
-
   let parsed: any;
   try {
-    parsed = tryParse(raw);
-  } catch {
-    return [];
+    const { adapter, config } = await getActiveAdapter();
+    parsed = await adapter.completeJSON<any>(
+      {
+        system: SCAN_SYSTEM,
+        messages: [{ role: "user", content: userMsg }],
+        maxTokens: 1024,
+      },
+      config
+    );
+  } catch (e) {
+    if (e instanceof LLMParseError) return []; // unparseable → nothing actionable
+    throw e; // network/API/no-key → let the caller surface it
   }
 
   // Map messageId → message so sender/context come from authoritative data.

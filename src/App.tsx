@@ -10,7 +10,8 @@ import { getTeamsMessages } from "./lib/teams";
 import { isTeamsConnected } from "./lib/msAuth";
 import { getBriefing, getOrGenerateBriefing, generateBriefing } from "./lib/briefing";
 import { generatePlan } from "./lib/planning";
-import { addMessage } from "./lib/chat";
+import { addMessage, clearMessages } from "./lib/chat";
+import { distillConversation } from "./lib/distill";
 import type {
   User,
   CalendarEvent,
@@ -186,6 +187,36 @@ export default function App() {
     setExpanded(next);
     await setWindowExpanded(next);
   }, []);
+
+  // Collapsing the chat distills the conversation into durable memory and clears
+  // it — so every collapse is a clean save, not just the "End & save" button.
+  // An effect on the expanded true→false transition catches ALL collapse paths
+  // (header button, tray toggle, the 10:00 briefing-end). distillConversation is
+  // a no-op when there are no messages, so an empty glance costs nothing.
+  const prevExpandedRef = useRef(expanded);
+  const distillingRef = useRef(false);
+  useEffect(() => {
+    const was = prevExpandedRef.current;
+    prevExpandedRef.current = expanded;
+    if (!was || expanded) return; // only run on a true → false transition
+    const u = userRef.current;
+    if (!u || distillingRef.current) return;
+    distillingRef.current = true;
+    (async () => {
+      try {
+        await distillConversation(u.id);
+        await clearMessages(u.id);
+        // Memory/goals/commitments may have changed — refresh the left panel.
+        setGoalsRefresh((n) => n + 1);
+        setCalendarRefresh((n) => n + 1);
+      } catch (e) {
+        // Keep the transcript for a later retry (next collapse or next launch).
+        console.error("[collapse-distill] failed, keeping transcript:", e);
+      } finally {
+        distillingRef.current = false;
+      }
+    })();
+  }, [expanded]);
 
   // Tray + daily-timer events from the Rust shell.
   useEffect(() => {
@@ -459,10 +490,7 @@ export default function App() {
       </div>
 
       {showSettings && (
-        <Settings
-          onClose={() => setShowSettings(false)}
-          onSaved={() => setShowSettings(false)}
-        />
+        <Settings onClose={() => setShowSettings(false)} />
       )}
     </div>
   );

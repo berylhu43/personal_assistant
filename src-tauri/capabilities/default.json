@@ -42,7 +42,10 @@
         { "url": "https://gmail.googleapis.com/*" },
         { "url": "https://oauth2.googleapis.com/*" },
         { "url": "https://login.microsoftonline.com/*" },
-        { "url": "https://graph.microsoft.com/*" }
+        { "url": "https://graph.microsoft.com/*" },
+        { "url": "https://api.openai.com/*" },
+        { "url": "https://api.deepseek.com/*" },
+        { "url": "https://dashscope-intl.aliyuncs.com/*" }
       ]
     }
   ]

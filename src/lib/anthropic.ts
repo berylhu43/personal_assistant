@@ -1,5 +1,6 @@
 import { fetch } from "@tauri-apps/plugin-http";
 import { getApiKey } from "./store";
+import { getProvider } from "./providers";
 import type { ChatMessage } from "./types";
 
 const MODEL = "claude-sonnet-4-6";
@@ -25,7 +26,9 @@ export async function chat(
   maxTokens = 1024,
   opts?: { webSearch?: boolean }
 ): Promise<string> {
-  const apiKey = await getApiKey();
+  // Key source of truth is the anthropic row in llm_providers (managed in
+  // Settings); fall back to the legacy settings.json key if the row is empty.
+  const apiKey = (await getProvider("anthropic"))?.api_key || (await getApiKey());
   if (!apiKey) throw new MissingApiKeyError();
 
   const body: Record<string, unknown> = {

@@ -237,6 +237,37 @@ CREATE TABLE IF NOT EXISTS microsoft_tokens (
 );
 "#,
         },
+        Migration {
+            version: 9,
+            description: "llm providers (multi-provider api keys)",
+            kind: MigrationKind::Up,
+            // Seed rows are inserted with ON CONFLICT DO NOTHING so re-applying
+            // never duplicates a row or wipes a key. api_key is left NULL (user
+            // fills it in); is_active starts 0 for all — the TS one-time
+            // migration flips anthropic active iff a key is copied in.
+            sql: r#"
+CREATE TABLE IF NOT EXISTS llm_providers (
+  id TEXT PRIMARY KEY,
+  display_name TEXT NOT NULL,
+  api_format TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  default_model TEXT NOT NULL,
+  api_key TEXT,
+  supports_web_search INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT INTO llm_providers
+  (id, display_name, api_format, base_url, default_model, supports_web_search, is_active)
+VALUES
+  ('anthropic', 'Claude',   'anthropic',         'https://api.anthropic.com',                                  'claude-sonnet-4-6', 1, 0),
+  ('openai',    'GPT',      'openai_compatible', 'https://api.openai.com/v1',                                  'gpt-5.4',           1, 0),
+  ('deepseek',  'DeepSeek', 'openai_compatible', 'https://api.deepseek.com',                                   'deepseek-chat',     0, 0),
+  ('qwen',      'Qwen',     'openai_compatible', 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',     'qwen-max',          0, 0)
+ON CONFLICT(id) DO NOTHING;
+"#,
+        },
     ]
 }
 

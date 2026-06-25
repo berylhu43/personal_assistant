@@ -1,5 +1,5 @@
 import { select, execute, uid } from "./db";
-import { chat } from "./anthropic";
+import { getActiveAdapter } from "./llm";
 import { createEvent } from "./google";
 import {
   saveGoal,
@@ -543,7 +543,11 @@ export async function runChatTurn(
     goals,
     commitments
   );
-  const raw = await chat(history, system);
+  const { adapter, config } = await getActiveAdapter();
+  const { text: raw } = await adapter.complete(
+    { system, messages: history, maxTokens: 1024 },
+    config
+  );
   const parsed = parseBlocks(raw);
 
   const { createdGoal, createdEvent, createdCommitment } = await applyActions(

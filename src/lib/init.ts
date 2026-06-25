@@ -5,8 +5,14 @@ import {
   setDataConsolidated,
   areTitlesCleaned,
   setTitlesCleaned,
+  isProviderKeyMigrated,
+  setProviderKeyMigrated,
 } from "./store";
 import { dedupeMemories, purgeRelativeTimeMemories } from "./memory";
+import {
+  migrateAnthropicKeyFromSettings,
+  listProviders,
+} from "./providers";
 import { hasMessages, clearMessages } from "./chat";
 import { distillConversation } from "./distill";
 import type { GoogleTokensRow } from "./types";
@@ -78,6 +84,22 @@ export async function initApp(): Promise<string> {
   }
   // One-time purge of stale time-relative memories (self-guarded).
   await purgeRelativeTimeMemories(localId);
+
+  // One-time copy of the legacy settings.json Anthropic key into llm_providers.
+  // Gated by a flag so it runs once; the copy itself is also non-destructive.
+  if (!(await isProviderKeyMigrated())) {
+    const { copied } = await migrateAnthropicKeyFromSettings();
+    await setProviderKeyMigrated();
+    // TEMP verification (remove next step): confirm the migration's outcome.
+    const providers = await listProviders();
+    const activeCount = providers.filter((p) => p.is_active === 1).length;
+    console.log("[providers] one-time migration:", {
+      anthropicKeyCopied: copied,
+      rowCount: providers.length,
+      activeCount, // should be 1 if a key was found, else 0
+      activeId: providers.find((p) => p.is_active === 1)?.id ?? null,
+    });
+  }
 
   // One-time strip of emoji/icons from existing goal & task titles.
   if (!(await areTitlesCleaned())) {

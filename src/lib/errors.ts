@@ -21,13 +21,27 @@ export function friendlyError(e: unknown): string {
     return "You appear to be offline. Check your connection and try again.";
   }
 
-  // Anthropic API key problems.
+  // Billing / quota — the key is valid but the account is out of credit.
   if (
-    /anthropic api error 401|anthropic api error 403|invalid x-api-key|invalid api key|authentication_error/.test(
+    /insufficient balance|insufficient_quota|exceeded your current quota|payment required|llm api error 402|api error 402/.test(
+      msg
+    )
+  ) {
+    return "This account is out of API credit — add funds in the provider's console, then try again.";
+  }
+
+  // API key problems (Anthropic + any OpenAI-compatible provider).
+  if (
+    /anthropic api error 401|anthropic api error 403|llm api error 401|llm api error 403|invalid x-api-key|invalid api key|invalid_api_key|authentication_error/.test(
       msg
     )
   ) {
     return "There's a problem with your API key — check it in Settings.";
+  }
+
+  // GPT web search (Responses API) didn't complete.
+  if (/responses api|web search didn'?t finish|incomplete:/.test(msg)) {
+    return "The web search didn't finish — try a narrower topic or try again.";
   }
 
   // Google auth/token expiry.

@@ -27,7 +27,11 @@ Single user, local-first. All secrets and data stay on the machine.
 
 - **Shell:** Tauri 2 (Rust). **UI:** React 18 + TypeScript, built with Vite. **Styling:** Tailwind.
 - **Local DB:** SQLite via `tauri-plugin-sql` (file `sqlite:assistant.db`).
-- **LLM:** Anthropic Messages API, model `claude-sonnet-4-6` (called from `src/lib/anthropic.ts`).
+- **LLM:** routed through a unified adapter layer (`src/lib/llm.ts`) over the `llm_providers` table —
+  `AnthropicAdapter` + `OpenAICompatAdapter` (GPT/DeepSeek/Qwen), selected by `getActiveAdapter()`. The
+  active provider's key/model/base_url come from the DB. EXCEPTION: the study-plan feature does its own
+  web-search routing — GPT via the OpenAI **Responses** API (`src/lib/gptSearch.ts`), every other provider
+  via `src/lib/anthropic.ts` `chat({webSearch:true})`. Web search is NOT part of the unified adapter.
 - **PDF parsing:** `pdfjs-dist` (for extracting assignments from uploaded files).
 
 > **Core principle:** *All business logic lives in the TypeScript layer.* Rust (`src-tauri/`) is only
@@ -81,7 +85,8 @@ src/                         React + TS — ALL business logic
     GoalTracker.tsx          Collapsed-view goal todolist
     BriefingPanel.tsx        Daily briefing UI
     ChatPanel.tsx            Chat UI (renders runChatTurn results)
-    Settings.tsx             Anthropic key entry + app settings
+    Settings.tsx             Multi-provider key mgmt (set key, pick active, test connection, get-a-key
+                             links) + Microsoft Teams connect/disconnect
     LocalCalendar.tsx        Local (non-Google) commitments UI
   lib/
     db.ts                    Database.load + typed helpers: select / selectOne / execute / uid / stripEmoji
@@ -95,13 +100,21 @@ src/                         React + TS — ALL business logic
                              (same InboxTaskCandidate shape as email; merged into the Inbox).
     init.ts                  ensureLocalUser (stable local id), initApp (one-time startup migrations/dedupe)
     store.ts                 tauri-plugin-store wrappers: API key, local user id, one-time flags, pending plan
-    anthropic.ts             chat() → Anthropic Messages API
+    providers.ts             llm_providers table: get/setActiveProvider, getProvider, setProviderKey,
+                             migrateAnthropicKeyFromSettings (one-time key copy). Managed in Settings.tsx.
+    anthropic.ts             chat() → Anthropic Messages API. STILL used ONLY by planning.ts (web_search).
+    llm.ts                   Unified adapter layer: AnthropicAdapter + OpenAICompatAdapter, getActiveAdapter().
+                             All NON-search model calls route through here (complete / completeJSON).
     chat.ts                  buildSystemPrompt, parseBlocks (fenced actions), runChatTurn, message persistence
     google.ts                getTodayEvents, getPendingEmails, getRecentEmailsWithBody, createEvent
     goals.ts                 Goal CRUD + progress/granularity/plan helpers
     memory.ts                memories table CRUD + dedupe + relative-time purge
     briefing.ts              todayStr, getBriefing, generateBriefing, getOrGenerateBriefing
-    planning.ts              generatePlan — LLM-generated weekly/learning plan for a goal
+    planning.ts              generatePlan — LLM-generated learning plan. Gated on the active provider's
+                             supports_web_search (DeepSeek/Qwen blocked with a switch-provider message).
+                             Branches: GPT → gptSearch.ts (Responses API); Claude → anthropic.ts
+                             chat(webSearch). Both yield a unified PlanDraft; downstream is shared.
+    gptSearch.ts             researchWithSearch — OpenAI Responses API web_search (study-plan, GPT only).
     plans.ts                 plans table CRUD (createPlan, getPlanByGoal)
     planExport.ts            planToMarkdown, downloadPlan (export a plan to a .md file)
     distill.ts               distillConversation — summarize chat into durable memories
@@ -145,9 +158,10 @@ append-only and run exactly once each — **never edit an existing migration; ad
 | `plans` | Learning/weekly plan documents linked to a goal. |
 | `inbox_scans` | Cached daily inbox-task scan per `(user_id, date)`. |
 | `microsoft_tokens` | Microsoft (Teams/Graph) OAuth tokens. Same shape/convention as `google_tokens`. |
+| `llm_providers` | Configurable LLM providers (Claude/GPT/DeepSeek/Qwen): api_format, base_url, default_model, api_key, supports_web_search, is_active. Exactly one row `is_active = 1`. |
 
 Migration versions so far: 1 initial · 2 calendar · 3 goal target_date · 4 task↔goal link · 5 weekly
-granularity · 6 plans · 7 inbox_scans · 8 microsoft_tokens. **Next migration = version 9.**
+granularity · 6 plans · 7 inbox_scans · 8 microsoft_tokens · 9 llm_providers. **Next migration = version 10.**
 
 ---
 
@@ -281,7 +295,7 @@ platform (Entra) + Microsoft Graph, not Google OAuth.
 - **Run inside Tauri** (`npm run tauri dev`), never plain Vite — DB calls fail otherwise.
 - **TS owns logic; Rust is the shell.** Resist adding logic to Rust.
 - **Migrations are append-only and versioned.** SQLite has no `ADD COLUMN IF NOT EXISTS`; rely on the
-  version guard. Next is version 9.
+  version guard. Next is version 10.
 - **Local identity vs. Google identity are separate.** The app keys everything off a stable local
   user id (`store.ts` / `ensureLocalUser`); Google email/name are display labels only — never use them
   as ownership keys.
@@ -293,7 +307,7 @@ platform (Entra) + Microsoft Graph, not Google OAuth.
   check for newer before downgrading).
 
 ## 10. Where to start for common tasks
-- New table/column → add migration v9 in `src-tauri/src/lib.rs`, then queries in the relevant
+- New table/column → add migration v10 in `src-tauri/src/lib.rs`, then queries in the relevant
   `src/lib/*.ts`, then types in `types.ts`.
 - New chat capability → extend `buildSystemPrompt` + `parseBlocks`/`runChatTurn` in `chat.ts`.
 - New Google API call → add to `google.ts`, auth via `getValidAccessToken()`.

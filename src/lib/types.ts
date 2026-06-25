@@ -25,6 +25,21 @@ export interface MicrosoftTokensRow {
   updated_at: string;
 }
 
+// One configurable LLM provider. Exactly one row has is_active = 1 at a time
+// (enforced by setActiveProvider). api_key is NULL until the user sets it.
+export interface LlmProviderRow {
+  id: string; // 'anthropic' | 'openai' | 'deepseek' | 'qwen'
+  display_name: string;
+  api_format: string; // 'anthropic' | 'openai_compatible'
+  base_url: string;
+  default_model: string;
+  api_key: string | null;
+  supports_web_search: number; // 0 | 1
+  is_active: number; // 0 | 1
+  created_at: string;
+  updated_at: string;
+}
+
 export interface GoalRow {
   id: string;
   user_id: string;

@@ -59,9 +59,11 @@ npm run tauri dev             # IMPORTANT: run inside Tauri, not `npm run dev`
 > runtime. Opening the Vite dev server in a plain browser will fail on every DB
 > call. Always use `npm run tauri dev`.
 
-On first launch: sign in with Google, then open **Settings (⚙)** and paste your
-**Anthropic API key**. The key is stored locally in `settings.json` and never
-committed or sent anywhere except the Anthropic API.
+On first launch: sign in with Google, then open **Settings (⚙)** and add an API
+key for at least one **LLM provider** (Claude, GPT, DeepSeek, or Qwen) and pick
+which one is active. Keys are stored locally (in the `llm_providers` table) and
+never committed or sent anywhere except that provider's API. Note: the
+study-plan feature needs web search, so it works only with **Claude or GPT**.
 
 To build a distributable app: `npm run tauri build`.
 
@@ -78,8 +80,8 @@ To build a distributable app: `npm run tauri build`.
 | `VITE_MS_CLIENT_ID` | Microsoft (Teams) app registration client ID — **Mobile and desktop** (public client, no secret). |
 | `VITE_MS_TENANT` | Microsoft tenant/org ID. Must be a work/school org (not `common`); personal accounts can't read Teams chat. |
 
-The **Anthropic API key** is *not* an env var — enter it in the in-app Settings
-panel (stored in the local `settings.json` via `tauri-plugin-store`).
+**LLM provider API keys** are *not* env vars — enter them in the in-app Settings
+panel (stored locally in the `llm_providers` table).
 
 ---
 

@@ -1,5 +1,5 @@
 import { select } from "./db";
-import { chat } from "./anthropic";
+import { getActiveAdapter, LLMParseError } from "./llm";
 import { addMemory, listMemories } from "./memory";
 import { saveGoal, listGoals } from "./goals";
 import { createCommitment, listUpcoming } from "./localCalendar";
@@ -34,11 +34,6 @@ Reconciliation — IMPORTANT:
 - You will be given the items ALREADY SAVED for this user (goals, commitments, memories). Output ONLY genuinely new items that are not already represented — even if you would phrase them differently.
 - If something in the transcript is already captured by an existing goal/commitment/memory (the same underlying thing, regardless of wording or exact date), OMIT it.
 - When unsure whether two refer to the same thing, treat them as the same and OMIT.`;
-
-function tryParse(raw: string): any {
-  const match = raw.match(/\{[\s\S]*\}/);
-  return JSON.parse(match ? match[0] : raw);
-}
 
 /**
  * Read the current session's messages, make ONE model call to extract durable
@@ -81,14 +76,22 @@ ${transcript}
 
 Distill ONLY genuinely new items into the JSON structure now.`;
 
-  const raw = await chat([{ role: "user", content: userMsg }], DISTILL_SYSTEM, 1024);
-
   let parsed: any;
   try {
-    parsed = tryParse(raw);
-  } catch {
-    // Nothing structured to write — treat as an empty distillation.
-    return;
+    const { adapter, config } = await getActiveAdapter();
+    parsed = await adapter.completeJSON<any>(
+      {
+        system: DISTILL_SYSTEM,
+        messages: [{ role: "user", content: userMsg }],
+        maxTokens: 1024,
+      },
+      config
+    );
+  } catch (e) {
+    // Unparseable output → nothing structured to write (empty distillation).
+    // Network/API failures propagate so the caller keeps the transcript & retries.
+    if (e instanceof LLMParseError) return;
+    throw e;
   }
 
   // memories — addMemory already dedupes on existing content.
