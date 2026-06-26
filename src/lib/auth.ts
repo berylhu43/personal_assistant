@@ -62,6 +62,12 @@ export async function signIn(): Promise<User> {
   // normally seeds this, but if startup init failed we'd otherwise hit a
   // FOREIGN KEY constraint (SQLite 787) here. Idempotent — same insert as
   // ensureLocalUser (inlined to avoid an auth→init→chat→google→auth cycle).
+  // Also purge stale placeholder rows with a different id first, otherwise the
+  // UNIQUE constraint on email fires before ON CONFLICT(id) can handle it.
+  await execute(
+    `DELETE FROM users WHERE email = 'local@assistant' AND id != ?1`,
+    [localId]
+  );
   await execute(
     `INSERT INTO users (id, email, name) VALUES (?1, 'local@assistant', NULL)
      ON CONFLICT(id) DO NOTHING`,

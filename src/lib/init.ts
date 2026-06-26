@@ -23,6 +23,14 @@ import type { GoogleTokensRow } from "./types";
  */
 export async function ensureLocalUser(): Promise<string> {
   const localId = await getLocalUserId();
+  // Remove any stale placeholder rows (different id, same 'local@assistant' email)
+  // that would block the INSERT below with a UNIQUE constraint on email.
+  // This can happen when settings.json is reset and a new local id is generated
+  // while the old placeholder row still lives in the DB.
+  await execute(
+    `DELETE FROM users WHERE email = 'local@assistant' AND id != ?1`,
+    [localId]
+  );
   await execute(
     `INSERT INTO users (id, email, name) VALUES (?1, 'local@assistant', NULL)
      ON CONFLICT(id) DO NOTHING`,
