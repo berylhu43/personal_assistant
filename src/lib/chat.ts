@@ -17,12 +17,6 @@ import {
 } from "./localCalendar";
 import { addMemory } from "./memory";
 import { listMemories } from "./memory";
-import {
-  getPendingPlan,
-  setPendingPlan,
-  clearPendingPlan,
-  type PendingPlan,
-} from "./store";
 import type {
   ChatMessage,
   MessageRow,
@@ -201,24 +195,32 @@ CRITICAL — explicit only: emit a block ONLY for an action the user EXPLICITLY 
 
 TITLES: all titles (goals, commitments, events) must be PLAIN TEXT — never include emoji, icons, or decorative symbols.
 
-LEARNING PLANS — confirm first, never build inline: If the user asks for a MULTI-DAY learning or study plan (e.g. "set me daily tasks to learn X by <date>", "make a study plan", "build a learning plan"), do NOT generate it inline and do NOT emit a goal block. Instead reply with ONE brief confirmation question — e.g. "Want me to search for resources and build a day-by-day plan to <date>?" — and emit a \`plan-request\` block, then stop:
+PLANS — clarify content first, then hand off to the app; never build inline: If the user wants you to GENERATE a multi-period plan/schedule for a goal — of ANY kind: learning/study, fitness/training, diet, travel/trip, a project, etc. (e.g. "make a study plan for X by <date>", "a cutting diet to August", "plan a 5-day Kyoto trip") — do NOT generate it inline, do NOT write the tasks, and do NOT emit a goal block.
+
+STEP 1 — clarify essentials IN TEXT first. If the request is missing CONTENT specifics needed to build a genuinely good plan, ask a brief clarifying question (1–3 short questions, or offer a couple of concrete options) and STOP — do NOT emit a \`plan-request\` yet. Examples of essentials worth asking about: a trip with no chosen destination/region, budget, or who's going; a diet with no calorie/goal target or dietary restrictions/allergies; a study plan with no sense of the user's current level or time available; any plan missing the deadline if one clearly matters. If the user explicitly asks YOU to choose (e.g. "you pick the destination"), still confirm the key preferences/constraints, then propose ONE concrete option and ask them to confirm before building. Use what you already remember about the user to avoid re-asking.
+
+STEP 2 — once you have enough, hand off. Reply with ONE short sentence acknowledging it and emit a \`plan-request\` block, then stop:
 \`\`\`plan-request
-{ "topic": "...", "targetDate": "YYYY-MM-DD" }
+{ "topic": "...", "targetDate": "YYYY-MM-DD", "granularity": "daily" | "weekly" | "monthly" }
 \`\`\`
-\`targetDate\` is optional (omit if the user gave no deadline). The app runs the dedicated web-search + planning path only after the user confirms — so do not also emit goal/commitment blocks during this confirmation step.
+The app then shows a small pop-up for the user to choose the cadence and whether to include researched resources/links, and generates+saves the plan as a goal. So do NOT ask about cadence or resources in text (the pop-up covers ONLY those two) — clarify CONTENT, not schedule/resources — and do NOT emit goal/commitment blocks for the plan. Put any decisions you settled (e.g. the chosen destination) into \`topic\` so the generator uses them.
+\`granularity\` is your SUGGESTED cadence (the user can change it in the pop-up): a SHORT range (up to ~3 weeks) → "daily"; a MEDIUM range (~3 weeks to ~4 months) → "weekly"; a LONG range (more than ~4 months) → "monthly". A long range should never be daily — that would be hundreds of tasks. \`targetDate\` is optional (omit if the user gave no deadline; then suggest "daily").
 
 1. Save a goal to the user's todo list:
 \`\`\`goal
 { "title": "...", "plan": [ { "week": 1, "focus": "..." } ],
   "targetDate": "YYYY-MM-DD",
-  "dailyTasks":  [ { "date": "YYYY-MM-DD", "title": "..." } ]
-  // OR (never both):
-  "weeklyTasks": [ { "weekStart": "YYYY-MM-DD (a Monday)", "title": "..." } ] }
+  "dailyTasks":   [ { "date": "YYYY-MM-DD", "title": "..." } ]
+  // OR (never more than one):
+  "weeklyTasks":  [ { "weekStart": "YYYY-MM-DD (a Monday)", "title": "..." } ]
+  // OR:
+  "monthlyTasks": [ { "monthStart": "YYYY-MM-DD (the 1st)", "title": "..." } ] }
 \`\`\`
-\`plan\`, \`targetDate\`, \`dailyTasks\`, and \`weeklyTasks\` are all optional.
-When the user asks to break a goal into a plan, emit a SINGLE goal block (with \`targetDate\`) and ONLY ONE of these arrays — YOU plan what each unit's task actually is (e.g. specific page ranges, chapters, or topics):
-- If they ask for a DAILY plan ("daily", "each day", "day by day"), use \`dailyTasks\`, one entry per day, with absolute dates resolved against today.
-- If they ask for a WEEKLY plan ("weekly", "每周", "by week"), use \`weeklyTasks\`, one entry per week, where \`weekStart\` is that week's Monday (weeks run Monday–Sunday) resolved against today.
+\`plan\`, \`targetDate\`, \`dailyTasks\`, \`weeklyTasks\`, and \`monthlyTasks\` are all optional.
+IMPORTANT: do NOT use the task arrays to GENERATE a multi-period plan — that goes through \`plan-request\` (see PLANS above). Use the task arrays ONLY when the user DICTATES specific tasks/dates themselves (e.g. "add a goal to read Atomic Habits with chapter 1 Monday, chapter 2 Tuesday"). In that case include ONLY ONE array:
+- \`dailyTasks\` — one entry per day; \`date\` is that day (absolute, resolved against today).
+- \`weeklyTasks\` — one entry per week; \`weekStart\` is that week's Monday (weeks run Monday–Sunday).
+- \`monthlyTasks\` — one entry per month; \`monthStart\` is the 1st of that month.
 Do NOT also emit separate \`commitment\` blocks for these; the tasks belong inside the goal block so they link to the goal and drive its progress.
 
 2. Remember a durable fact/preference about the user:
@@ -284,12 +286,24 @@ interface ParsedWeeklyTask {
   title: string;
 }
 
+interface ParsedMonthlyTask {
+  monthStart: string;
+  title: string;
+}
+
 interface ParsedGoal {
   title: string;
   plan?: WeeklyPlanItem[];
   targetDate?: string;
   dailyTasks?: ParsedDailyTask[];
   weeklyTasks?: ParsedWeeklyTask[];
+  monthlyTasks?: ParsedMonthlyTask[];
+}
+
+type PlanGranularity = "daily" | "weekly" | "monthly";
+
+function asGranularity(v: unknown): PlanGranularity | undefined {
+  return v === "daily" || v === "weekly" || v === "monthly" ? v : undefined;
 }
 
 interface ParsedActions {
@@ -302,7 +316,7 @@ interface ParsedActions {
   deleteGoals: string[];
   completeCommitments: string[];
   deleteCommitments: string[];
-  planRequest?: { topic: string; targetDate?: string };
+  planRequest?: { topic: string; targetDate?: string; granularity?: PlanGranularity };
 }
 
 const BLOCK_RE =
@@ -317,7 +331,9 @@ export function parseBlocks(raw: string): ParsedActions {
   const deleteGoals: string[] = [];
   const completeCommitments: string[] = [];
   const deleteCommitments: string[] = [];
-  let planRequest: { topic: string; targetDate?: string } | undefined;
+  let planRequest:
+    | { topic: string; targetDate?: string; granularity?: PlanGranularity }
+    | undefined;
 
   let match: RegExpExecArray | null;
   while ((match = BLOCK_RE.exec(raw)) !== null) {
@@ -329,6 +345,7 @@ export function parseBlocks(raw: string): ParsedActions {
           topic: String(json.topic),
           targetDate:
             typeof json.targetDate === "string" ? json.targetDate : undefined,
+          granularity: asGranularity(json.granularity),
         };
       else if (kind === "add-event" && json.title && json.date) events.push(json);
       else if (kind === "goal" && json.title)
@@ -342,6 +359,9 @@ export function parseBlocks(raw: string): ParsedActions {
             : undefined,
           weeklyTasks: Array.isArray(json.weeklyTasks)
             ? json.weeklyTasks
+            : undefined,
+          monthlyTasks: Array.isArray(json.monthlyTasks)
+            ? json.monthlyTasks
             : undefined,
         });
       else if (kind === "remember" && json.content)
@@ -376,23 +396,15 @@ export function parseBlocks(raw: string): ParsedActions {
 
 // ---- one chat turn ----
 
-/** Loose affirmative detection for confirming a pending learning plan. */
-function isAffirmative(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  return /^(y|yes+|yeah|yep|yup|sure|ok(ay)?|do it|go( ahead)?|please( do)?|sounds good|schedule( it)?|build it|let'?s do it|confirm(ed)?|go for it)\b/.test(
-    t
-  ) || /好|是的?|可以|安排|确定|没问题|搞定/.test(t);
-}
-
 export interface ChatTurnResult {
   reply: string;
   createdGoal: boolean;
   createdEvent: boolean;
   createdCommitment: boolean;
-  // Set when the user confirmed a learning plan. The caller runs the plan from
-  // a layer that survives collapse/unmount (see App.runPlan) — runChatTurn does
-  // NOT generate it inline.
-  planConfirmed?: PendingPlan;
+  // Set when the assistant recognized a plan request. The caller opens the
+  // plan-options pop-up (cadence + resources); after the user picks, the plan is
+  // generated from a layer that survives collapse/unmount (see App.runPlan).
+  planRequest?: { topic: string; targetDate?: string; granularity?: PlanGranularity };
 }
 
 /**
@@ -424,9 +436,13 @@ async function applyActions(
     });
     createdGoal = true;
 
-    // Model-planned tasks linked to this goal — weekly OR daily, never both.
+    // Model-planned tasks linked to this goal — daily, weekly, OR monthly; only
+    // one array is ever populated.
     const weekly = (g.weeklyTasks ?? []).filter(
       (t) => t && /^\d{4}-\d{2}-\d{2}$/.test(t.weekStart) && t.title
+    );
+    const monthly = (g.monthlyTasks ?? []).filter(
+      (t) => t && /^\d{4}-\d{2}-\d{2}$/.test(t.monthStart) && t.title
     );
     const daily = (g.dailyTasks ?? []).filter(
       (t) => t && /^\d{4}-\d{2}-\d{2}$/.test(t.date) && t.title
@@ -446,6 +462,21 @@ async function applyActions(
         });
       }
       await setGoalTaskTotal(goalId, weekly.length);
+      createdCommitment = true;
+    } else if (monthly.length > 0) {
+      await setGoalGranularity(goalId, "monthly");
+      for (const t of monthly) {
+        await createCommitment({
+          userId,
+          title: t.title,
+          date: t.monthStart,
+          time: null,
+          source: "goal",
+          goalId,
+          span: "month",
+        });
+      }
+      await setGoalTaskTotal(goalId, monthly.length);
       createdCommitment = true;
     } else if (daily.length > 0) {
       await setGoalGranularity(goalId, "daily");
@@ -509,25 +540,6 @@ export async function runChatTurn(
 ): Promise<ChatTurnResult> {
   await addMessage(userId, "user", userText);
 
-  // If the previous assistant turn asked to confirm a learning plan, a
-  // confirmation hands off to App.runPlan (which survives collapse). We do NOT
-  // generate here — just signal the caller with the pending request.
-  const pending = await getPendingPlan();
-  if (pending) {
-    await clearPendingPlan();
-    if (isAffirmative(userText)) {
-      console.log("[plan-debug] confirmation detected → hand off to App", pending);
-      return {
-        reply: "",
-        createdGoal: false,
-        createdEvent: false,
-        createdCommitment: false,
-        planConfirmed: pending,
-      };
-    }
-    // Not a confirmation — fall through to a normal chat turn.
-  }
-
   const [memories, goals, commitments, history] = await Promise.all([
     listMemories(userId),
     listGoals(userId).then((gs) => gs.filter((g) => !g.done)),
@@ -555,14 +567,21 @@ export async function runChatTurn(
     parsed
   );
 
-  // Remember a pending plan request so the user's next-turn confirmation runs it.
-  if (parsed.planRequest) {
-    console.log("[plan-debug] plan-request captured → pending set", parsed.planRequest);
-    await setPendingPlan(parsed.planRequest);
-  }
-
   const visible = parsed.clean || "Done.";
   await addMessage(userId, "assistant", visible);
+
+  // A plan request: signal the caller to open the plan-options pop-up. (Nothing
+  // is generated yet — the user picks cadence + resources first.)
+  if (parsed.planRequest) {
+    console.log("[plan-debug] plan-request → open options modal", parsed.planRequest);
+    return {
+      reply: visible,
+      createdGoal,
+      createdEvent,
+      createdCommitment,
+      planRequest: parsed.planRequest,
+    };
+  }
 
   return { reply: visible, createdGoal, createdEvent, createdCommitment };
 }

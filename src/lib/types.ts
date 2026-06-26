@@ -50,8 +50,9 @@ export interface GoalRow {
   start_date: string | null; // optional YYYY-MM-DD
   target_date: string | null; // optional YYYY-MM-DD
   task_total: number; // # of linked tasks (0 = manual progress)
-  granularity: string; // 'daily' | 'weekly'
+  granularity: string; // 'daily' | 'weekly' | 'monthly'
   note: string | null; // free-form user detail (how-to + links)
+  discarded: number; // 0 | 1 — soft-deleted (recoverable from Archive)
   created_at: string;
 }
 
@@ -90,8 +91,9 @@ export interface CommitmentRow {
   source: string | null;
   done: number; // 0 | 1
   goal_id: string | null; // links a daily task to its goal
-  span: string | null; // 'week' = weekly task; NULL = daily/one-off
+  span: string | null; // 'week' = weekly, 'month' = monthly; NULL = daily/one-off
   note: string | null; // free-form user detail (how-to + links)
+  discarded: number; // 0 | 1 — soft-deleted (recoverable from Archive)
   created_at: string;
 }
 
@@ -106,8 +108,9 @@ export interface Goal {
   startDate: string | null; // optional YYYY-MM-DD
   targetDate: string | null; // optional YYYY-MM-DD
   taskTotal: number; // # of linked tasks (0 = manual progress)
-  granularity: "daily" | "weekly";
+  granularity: "daily" | "weekly" | "monthly";
   note: string | null; // free-form user detail (how-to + links)
+  discarded: boolean; // soft-deleted (recoverable from Archive)
   createdAt: string;
 }
 
@@ -158,8 +161,9 @@ export interface Commitment {
   done: boolean;
   source: string | null;
   goalId: string | null; // links a daily task to its goal
-  span: "week" | null; // 'week' = weekly task; null = daily/one-off
+  span: "week" | "month" | null; // weekly / monthly task; null = daily/one-off
   note: string | null; // free-form user detail (how-to + links)
+  discarded: boolean; // soft-deleted (recoverable from Archive)
   createdAt: string;
 }
 

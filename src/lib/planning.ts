@@ -1,5 +1,5 @@
 import { chat } from "./anthropic";
-import { openaiCompatAdapter, type ProviderConfig } from "./llm";
+import { openaiCompatAdapter, getActiveAdapter, type ProviderConfig } from "./llm";
 import { researchWithSearch } from "./gptSearch";
 import { getActiveProvider } from "./providers";
 import { saveGoal, setGoalGranularity, setGoalTaskTotal } from "./goals";
@@ -12,13 +12,13 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // Hard ceilings so the plan path can NEVER hang silently. Web search runs
 // several server-side searches plus a long structured output, so it genuinely
 // needs minutes — give it real headroom before falling back to the search-free
-// path. Generation now runs at App level (survives collapse), so a long wait is
+// path. Generation runs at App level (survives collapse), so a long wait is
 // fine; the indicator stays visible the whole time.
 const SEARCH_TIMEOUT_MS = 210_000; // 3.5 min
 const NOSEARCH_TIMEOUT_MS = 90_000;
 
-// A multi-week day-by-day plan with resources easily exceeds 4096 output
-// tokens; too small a budget truncates the JSON mid-array and parsing fails.
+// A multi-period plan with resources easily exceeds 4096 output tokens; too
+// small a budget truncates the JSON mid-array and parsing fails.
 const PLAN_MAX_TOKENS = 8192;
 
 /**
@@ -50,40 +50,127 @@ function todayStr(): string {
   return new Date(d.getTime() - tz).toISOString().slice(0, 10);
 }
 
-const PLAN_SYSTEM = `You build a concrete, day-by-day learning plan and ground it in REAL resources you find via web search.
+// ---- cadence ----
+// The plan can be scheduled daily / weekly / monthly, or at a "custom" rhythm
+// the user typed (resolved to explicit dated tasks). Each "days" entry is one
+// period; its "date" is that period's start.
+type Granularity = "daily" | "weekly" | "monthly" | "custom";
+
+interface Cadence {
+  span: "week" | "month" | null;
+  phrase: string; // "day-by-day"
+  spread: string; // how to spread entries across the range
+  dateDesc: string; // what each entry's "date" means
+  label: string; // word for the saved-confirmation reply
+  storeGranularity: "daily" | "weekly" | "monthly"; // goal.granularity column
+}
+
+function cadenceInfo(g: Granularity, custom?: string): Cadence {
+  switch (g) {
+    case "weekly":
+      return {
+        span: "week",
+        phrase: "week-by-week",
+        spread: "one entry per week (weeks run Monday–Sunday)",
+        dateDesc: "that week's Monday (YYYY-MM-DD)",
+        label: "weekly",
+        storeGranularity: "weekly",
+      };
+    case "monthly":
+      return {
+        span: "month",
+        phrase: "month-by-month",
+        spread: "one entry per month",
+        dateDesc: "the 1st of that month (YYYY-MM-DD)",
+        label: "monthly",
+        storeGranularity: "monthly",
+      };
+    case "custom":
+      return {
+        span: null,
+        phrase: "custom-cadence",
+        spread: `entries spaced at this rhythm: "${
+          custom?.trim() || "as appropriate"
+        }" — choose explicit dates that fit it`,
+        dateDesc: "that task's date (YYYY-MM-DD)",
+        label: "scheduled",
+        storeGranularity: "daily",
+      };
+    case "daily":
+    default:
+      return {
+        span: null,
+        phrase: "day-by-day",
+        spread: "one entry per day",
+        dateDesc: "that day (YYYY-MM-DD)",
+        label: "daily",
+        storeGranularity: "daily",
+      };
+  }
+}
+
+// ---- prompts ----
+
+// Heavy (researched) plan: domain-general, grounded in real web resources.
+function buildPlanSystem(c: Cadence): string {
+  return `You build a concrete, ${c.phrase} plan for the user's goal — which may be learning/study, fitness or training, diet, travel, a project, or anything else — and ground it in REAL, current resources you find via web search.
 
 Process:
-- Search the web for currently-existing, high-quality resources (GitHub repos, official docs, articles, code) for the requested topics. Use REAL URLs taken from the search results — never invent or guess links.
-- Spread the work across the requested date range, resolving every date to an absolute YYYY-MM-DD.
+- Search the web for currently-existing, high-quality resources relevant to the goal (official docs, articles, guides, videos, repos, recipes, places — whatever fits). Use REAL URLs taken from the search results — never invent or guess links.
+- Spread the work across the requested date range as ${c.spread}, resolving every date to an absolute YYYY-MM-DD. Each entry's "date" is ${c.dateDesc}.
 
 Return ONLY a single JSON object (no prose before or after) of this exact shape:
 {
-  "goal": { "title": "...", "targetDate": "YYYY-MM-DD", "granularity": "daily" },
+  "goal": { "title": "...", "targetDate": "YYYY-MM-DD" },
   "days": [
     {
       "date": "YYYY-MM-DD",
-      "topic": "short topic, e.g. MCP fundamentals",
+      "topic": "short label for this period (e.g. \\"Core lifts\\", \\"Kyoto temples\\", \\"MCP basics\\")",
       "task": "short what-to-do (<= ~60 chars)",
-      "practice": "short hands-on thing (<= ~60 chars)",
-      "resources": [ { "kind": "repo|article|doc|code", "title": "...", "url": "..." } ],
-      "est_time": "2h"
+      "practice": "optional: a concrete hands-on step (<= ~60 chars)",
+      "resources": [ { "kind": "doc|article|video|guide|repo|recipe|place|...", "title": "...", "url": "..." } ],
+      "est_time": "optional, e.g. 2h"
     }
   ]
 }
 
-Keep "task" and "practice" SHORT (<= ~60 chars). Put detail and links in "resources". One entry per day.
-Keep the plan COMPACT so the whole JSON fits in one response: at most 2 resources per day, concise titles. If the date range is long, cover it without padding.
+Each entry in "days" represents ONE period. Keep "task" and "practice" SHORT (<= ~60 chars). Put detail and links in "resources".
+Keep the plan COMPACT so the whole JSON fits in one response: at most 2 resources per entry, concise titles. Cover the full range without padding — at most ~30 entries.
 Return ONLY the raw JSON object — no markdown code fences, no prose before or after.`;
+}
 
-const PLAN_SYSTEM_NOSEARCH = `${PLAN_SYSTEM}
+function buildPlanSystemNoSearch(c: Cadence): string {
+  return `${buildPlanSystem(c)}
 
-NOTE: Web search is unavailable for this request. Build the plan from your own knowledge. Only include resource URLs you are highly confident exist (official docs, well-known repos); otherwise omit the "resources" array for that day. Never invent links.`;
+NOTE: Web search is unavailable for this request. Build the plan from your own knowledge. Only include resource URLs you are highly confident exist (official docs, well-known sites); otherwise omit the "resources" array for that entry. Never invent links.`;
+}
 
 // GPT goes through the Responses API with a single combined prompt (no separate
 // system field). Cap the number of searches in-prompt to bound cost + latency.
-const PLAN_SYSTEM_GPT_SEARCH = `${PLAN_SYSTEM}
+function buildPlanSystemGptSearch(c: Cadence): string {
+  return `${buildPlanSystem(c)}
 
 Search the web AT MOST 3 times — be efficient, then write the plan.`;
+}
+
+// Lightweight (no resources): just a schedule with an optional one-line detail.
+// No web search, so it works with ANY provider.
+function buildLightSystem(c: Cadence): string {
+  return `You lay out a concrete, ${c.phrase} schedule for the user's goal (learning, fitness, diet, travel, a project, anything). Use your own knowledge — do NOT include links or resources.
+
+Spread the work across the requested date range as ${c.spread}, resolving every date to an absolute YYYY-MM-DD. Each entry's "date" is ${c.dateDesc}.
+
+Return ONLY a single JSON object (no prose) of this exact shape:
+{
+  "goal": { "title": "...", "targetDate": "YYYY-MM-DD" },
+  "days": [
+    { "date": "YYYY-MM-DD", "title": "short task for this period (<= ~70 chars)", "detail": "optional ONE line of guidance (<= ~120 chars)" }
+  ]
+}
+
+One entry per period. Cover the full range without padding — at most ~40 entries. No links, no resources.
+Return ONLY the raw JSON object — no markdown code fences, no prose.`;
+}
 
 export interface PlanResult {
   ok: boolean;
@@ -92,20 +179,20 @@ export interface PlanResult {
   title?: string;
 }
 
-function buildUserMsg(req: PendingPlan): string {
+function buildUserMsg(req: PendingPlan, c: Cadence): string {
   return `Today's date is ${todayStr()}.
 
-Build a day-by-day learning plan.
-Topic: ${req.topic}
+Build a ${c.phrase} plan.
+Goal/topic: ${req.topic}
 Target date: ${req.targetDate ?? "(pick a sensible span, ~2–4 weeks from today)"}
+Schedule: ${c.spread}.
 
 Return ONLY the JSON object.`;
 }
 
 // Unified intermediate produced by either provider branch: the draft plan text
 // (the JSON, which already embeds the real resource links the model found) plus
-// the list of verified source links, and whether live search actually ran. The
-// downstream (parse → store → download) consumes this and is provider-agnostic.
+// the list of verified source links, and whether live search actually ran.
 interface PlanDraft {
   text: string;
   sources: { url: string; title: string }[];
@@ -113,15 +200,15 @@ interface PlanDraft {
 }
 
 /**
- * Claude branch: native web_search (unchanged behavior), with the existing
- * no-search fallback. Claude embeds the real links it found directly in the JSON
- * `resources`, so there is no separate citation list to surface here.
+ * Claude branch: native web_search, with a no-search fallback. Claude embeds the
+ * real links it found directly in the JSON `resources`, so there is no separate
+ * citation list to surface here.
  */
-async function fetchPlanDraftClaude(userMsg: string): Promise<PlanDraft> {
+async function fetchPlanDraftClaude(userMsg: string, c: Cadence): Promise<PlanDraft> {
   try {
     console.log("[plan-debug] Claude chat(webSearch=true)…");
     const text = await withTimeout(
-      chat([{ role: "user", content: userMsg }], PLAN_SYSTEM, PLAN_MAX_TOKENS, {
+      chat([{ role: "user", content: userMsg }], buildPlanSystem(c), PLAN_MAX_TOKENS, {
         webSearch: true,
       }),
       SEARCH_TIMEOUT_MS,
@@ -131,7 +218,11 @@ async function fetchPlanDraftClaude(userMsg: string): Promise<PlanDraft> {
   } catch (e) {
     console.error("[plan-debug] Claude web-search failed — no-search fallback:", e);
     const text = await withTimeout(
-      chat([{ role: "user", content: userMsg }], PLAN_SYSTEM_NOSEARCH, PLAN_MAX_TOKENS),
+      chat(
+        [{ role: "user", content: userMsg }],
+        buildPlanSystemNoSearch(c),
+        PLAN_MAX_TOKENS
+      ),
       NOSEARCH_TIMEOUT_MS,
       "plan request"
     );
@@ -145,12 +236,13 @@ async function fetchPlanDraftClaude(userMsg: string): Promise<PlanDraft> {
  */
 async function fetchPlanDraftGpt(
   userMsg: string,
-  cfg: ProviderConfig
+  cfg: ProviderConfig,
+  c: Cadence
 ): Promise<PlanDraft> {
   try {
     console.log("[plan-debug] GPT Responses web_search…");
     const r = await withTimeout(
-      researchWithSearch(`${PLAN_SYSTEM_GPT_SEARCH}\n\n${userMsg}`, cfg),
+      researchWithSearch(`${buildPlanSystemGptSearch(c)}\n\n${userMsg}`, cfg),
       SEARCH_TIMEOUT_MS,
       "web-search plan request"
     );
@@ -160,7 +252,7 @@ async function fetchPlanDraftGpt(
     const r = await withTimeout(
       openaiCompatAdapter.complete(
         {
-          system: PLAN_SYSTEM_NOSEARCH,
+          system: buildPlanSystemNoSearch(c),
           messages: [{ role: "user", content: userMsg }],
           maxTokens: PLAN_MAX_TOKENS,
         },
@@ -173,12 +265,38 @@ async function fetchPlanDraftGpt(
   }
 }
 
+/** Lightweight branch: no search, any provider, via the active adapter. */
+async function fetchLightPlan(userMsg: string, c: Cadence): Promise<string> {
+  console.log("[plan-debug] lightweight plan (no search)…");
+  const { adapter, config } = await getActiveAdapter();
+  const { text } = await withTimeout(
+    adapter.complete(
+      {
+        system: buildLightSystem(c),
+        messages: [{ role: "user", content: userMsg }],
+        maxTokens: PLAN_MAX_TOKENS,
+      },
+      config
+    ),
+    NOSEARCH_TIMEOUT_MS,
+    "plan request"
+  );
+  return text;
+}
+
 /**
- * The dedicated plan path: web-search the topic, generate a fixed structure,
- * persist a goal + daily commitments + the full plan document. Resilient by
- * design — if web search fails or stalls, it falls back to a search-free plan
- * (goal + daily tasks, fewer/no resource links) rather than hanging. Reports
- * honest failure if everything fails or the JSON can't be parsed.
+ * Generate a plan for any goal and persist it as a GOAL (so it survives closing
+ * the chat): a `goals` row + one commitment per period (span set by cadence).
+ *
+ * Two modes, chosen by `req.withResources` from the plan-options pop-up:
+ * - WITH resources → web-search a domain-general, researched plan (rich
+ *   `PlanDay` entries + a stored plan document with real links). Needs a
+ *   search-capable provider (Claude/GPT).
+ * - WITHOUT resources → a no-search, schedule-only plan (title + optional
+ *   one-line detail per period, stored on each commitment's note). Any provider.
+ *
+ * Resilient: timeouts + a no-search fallback for the heavy path; honest failure
+ * if everything fails or the JSON can't be parsed.
  */
 export async function generatePlan(
   userId: string,
@@ -186,42 +304,51 @@ export async function generatePlan(
 ): Promise<PlanResult> {
   console.log("[plan-debug] generatePlan start", req);
 
-  // ---- Gate: the study-plan feature requires a search-capable provider ----
   const provider = await getActiveProvider();
   if (!provider || !provider.api_key) {
     return {
       ok: false,
-      reply: "Add your model's API key in Settings to build study plans.",
-    };
-  }
-  if (provider.supports_web_search !== 1) {
-    // DeepSeek / Qwen: no native web search → do not run.
-    return {
-      ok: false,
-      reply:
-        "The study-plan feature needs web search. Please switch to Claude or GPT in Settings.",
+      reply: "Add your model's API key in Settings to build plans.",
     };
   }
 
-  const userMsg = buildUserMsg(req);
+  const withResources = req.withResources ?? true;
+  const granularity: Granularity = req.granularity ?? "daily";
+  const c = cadenceInfo(granularity, req.customCadence);
+  const userMsg = buildUserMsg(req, c);
 
-  // ---- Branch by provider (the ONLY provider-specific part) ----
-  const gptCfg: ProviderConfig | null =
-    provider.id === "openai"
-      ? {
-          id: provider.id,
-          apiFormat: "openai_compatible",
-          baseUrl: provider.base_url,
-          model: provider.default_model,
-          apiKey: provider.api_key as string,
-        }
-      : null;
-
-  let draft: PlanDraft;
+  // ---- Fetch the draft (the ONLY mode/provider-specific part) ----
+  let raw: string;
+  let usedSearch = false;
   try {
-    draft = gptCfg
-      ? await fetchPlanDraftGpt(userMsg, gptCfg)
-      : await fetchPlanDraftClaude(userMsg);
+    if (withResources) {
+      if (provider.supports_web_search !== 1) {
+        // DeepSeek / Qwen can't web-search — point the user at the no-resources
+        // option (which works on any provider) or a search-capable provider.
+        return {
+          ok: false,
+          reply:
+            "Researched resources need web search — switch to Claude or GPT in Settings, or ask again and choose “no resources” for a schedule-only plan.",
+        };
+      }
+      const gptCfg: ProviderConfig | null =
+        provider.id === "openai"
+          ? {
+              id: provider.id,
+              apiFormat: "openai_compatible",
+              baseUrl: provider.base_url,
+              model: provider.default_model,
+              apiKey: provider.api_key as string,
+            }
+          : null;
+      const draft = gptCfg
+        ? await fetchPlanDraftGpt(userMsg, gptCfg, c)
+        : await fetchPlanDraftClaude(userMsg, c);
+      raw = draft.text;
+      usedSearch = draft.usedSearch;
+    } else {
+      raw = await fetchLightPlan(userMsg, c);
+    }
   } catch (e2) {
     console.error("[plan-debug] plan generation failed:", e2);
     return {
@@ -232,18 +359,9 @@ export async function generatePlan(
     };
   }
 
-  // ---- Shared downstream (identical for both providers) ----
-  const { text: raw, sources, usedSearch } = draft;
-  console.log("[plan-debug] draft ready:", {
-    provider: provider.id,
-    usedSearch,
-    sources: sources.length,
-    length: raw.length,
-  });
-
+  // ---- Parse + validate (shared) ----
   let parsed: any;
   try {
-    console.log("[plan-debug] parsing JSON…");
     parsed = parsePlanJson(raw);
     console.log("[plan-debug] parsed ok; days =", parsed?.days?.length);
   } catch {
@@ -251,7 +369,7 @@ export async function generatePlan(
     return {
       ok: false,
       reply:
-        "I couldn't finish building that plan — the response didn't come back complete. Try a shorter date range or a narrower topic.",
+        "I couldn't finish building that plan — the response didn't come back complete. Try a shorter range or a narrower goal.",
     };
   }
 
@@ -262,7 +380,7 @@ export async function generatePlan(
     return {
       ok: false,
       reply:
-        "I couldn't build a usable plan from what I found. Try narrowing the topic or giving a clearer target date.",
+        "I couldn't build a usable plan. Try narrowing the goal or giving a clearer target date.",
     };
   }
 
@@ -273,41 +391,50 @@ export async function generatePlan(
         ? req.targetDate
         : null;
 
-  console.log("[plan-debug] saveGoal…", goal.title, targetDate);
-  const goalId = await saveGoal({ userId, title: String(goal.title), targetDate });
-  await setGoalGranularity(goalId, "daily");
-  console.log("[plan-debug] goal saved", goalId);
+  // ---- Persist: goal + per-period commitments (+ plan doc when researched) ----
+  const title = String(goal.title);
+  console.log("[plan-debug] saveGoal…", title, targetDate);
+  const goalId = await saveGoal({ userId, title, targetDate });
+  await setGoalGranularity(goalId, c.storeGranularity);
 
   let count = 0;
   for (const d of days) {
     if (!d || typeof d.date !== "string" || !DATE_RE.test(d.date)) continue;
-    const title = String(d.topic || d.task || "Study").slice(0, 120);
+    const taskTitle = String(d.title || d.topic || d.task || "Task").slice(0, 120);
+    // Lightweight plans carry their one-line guidance on the commitment note;
+    // researched plans keep their detail in the plan document instead.
+    const note =
+      !withResources && typeof d.detail === "string" && d.detail.trim()
+        ? d.detail.trim()
+        : null;
     await createCommitment({
       userId,
-      title,
+      title: taskTitle,
       date: d.date,
       time: null,
       source: "goal",
       goalId,
+      span: c.span,
+      note,
     });
     count++;
   }
   console.log("[plan-debug] commitments created", count);
   await setGoalTaskTotal(goalId, count);
 
-  await createPlan({
-    goalId,
-    title: String(goal.title),
-    content: JSON.stringify(days),
-  });
-  console.log("[plan-debug] plan document saved");
+  if (withResources) {
+    await createPlan({ goalId, title, content: JSON.stringify(days) });
+    console.log("[plan-debug] plan document saved");
+  }
 
-  return {
-    ok: true,
-    goalId,
-    title: String(goal.title),
-    reply: usedSearch
-      ? `Saved a ${count}-day ${goal.title} plan with daily tasks and resources.`
-      : `Saved a ${count}-day ${goal.title} plan with daily tasks (built from prior knowledge — web search was unavailable, so resource links may be limited).`,
-  };
+  const base = `Saved your ${title} plan — ${count} ${c.label} task${
+    count === 1 ? "" : "s"
+  }`;
+  const reply = withResources
+    ? usedSearch
+      ? `${base} with resources and links.`
+      : `${base} (built from prior knowledge — web search was unavailable, so links may be limited).`
+    : `${base}.`;
+
+  return { ok: true, goalId, title, reply };
 }

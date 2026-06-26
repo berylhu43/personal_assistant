@@ -29,9 +29,10 @@ Single user, local-first. All secrets and data stay on the machine.
 - **Local DB:** SQLite via `tauri-plugin-sql` (file `sqlite:assistant.db`).
 - **LLM:** routed through a unified adapter layer (`src/lib/llm.ts`) over the `llm_providers` table —
   `AnthropicAdapter` + `OpenAICompatAdapter` (GPT/DeepSeek/Qwen), selected by `getActiveAdapter()`. The
-  active provider's key/model/base_url come from the DB. EXCEPTION: the study-plan feature does its own
-  web-search routing — GPT via the OpenAI **Responses** API (`src/lib/gptSearch.ts`), every other provider
-  via `src/lib/anthropic.ts` `chat({webSearch:true})`. Web search is NOT part of the unified adapter.
+  active provider's key/model/base_url come from the DB. EXCEPTION: the plan feature's **researched** mode
+  (withResources) does its own web-search routing — GPT via the OpenAI **Responses** API
+  (`src/lib/gptSearch.ts`), every other provider via `src/lib/anthropic.ts` `chat({webSearch:true})`. Web
+  search is NOT part of the unified adapter; the plan feature's schedule-only mode DOES use the unified adapter.
 - **PDF parsing:** `pdfjs-dist` (for extracting assignments from uploaded files).
 
 > **Core principle:** *All business logic lives in the TypeScript layer.* Rust (`src-tauri/`) is only
@@ -84,12 +85,15 @@ src/                         React + TS — ALL business logic
     SignInScreen.tsx         Google connect screen
     GoalTracker.tsx          Collapsed-view goal todolist
     BriefingPanel.tsx        Daily briefing UI
-    ChatPanel.tsx            Chat UI (renders runChatTurn results)
+    ChatPanel.tsx            Chat UI (renders runChatTurn results; opens PlanOptionsModal on a plan-request)
+    PlanOptionsModal.tsx     Plan pop-up: pick cadence (daily/weekly/monthly/other) + resources yes/no,
+                             then App.runPlan → generatePlan. Replaces the old text "yes/weekly" confirm.
     Settings.tsx             Multi-provider key mgmt (set key, pick active, test connection, get-a-key
                              links) + Microsoft Teams connect/disconnect
     LocalCalendar.tsx        Local (non-Google) commitments UI
-    Archive.tsx              Completed goals/tasks (done=1) review + Restore + confirmed hard-delete.
-                             Expanded-workbench modal only (header archive icon); sorts by created_at DESC.
+    Archive.tsx              Completed (done=1) AND Discarded (discarded=1, soft-deleted via ×) goals/tasks:
+                             Restore + confirmed hard-delete. Expanded-workbench modal only (header archive
+                             icon); sorts by created_at DESC. × in the active lists soft-deletes (recoverable).
     PlanDayEditor.tsx        Shared inline editor for one plan-day (date/topic/task/practice/est/links),
                              used by BOTH GoalTracker and LocalCalendar so plan-day editing is identical.
     PencilIcon.tsx           Shared edit-pencil icon.
@@ -104,7 +108,8 @@ src/                         React + TS — ALL business logic
     teamsTasks.ts            scanTeamsForTasks — LLM extracts task candidates from Teams DMs/@mentions
                              (same InboxTaskCandidate shape as email; merged into the Inbox).
     init.ts                  ensureLocalUser (stable local id), initApp (one-time startup migrations/dedupe)
-    store.ts                 tauri-plugin-store wrappers: API key, local user id, one-time flags, pending plan
+    store.ts                 tauri-plugin-store wrappers: API key, local user id, one-time flags + PendingPlan
+                             type (plan-generation options: topic/targetDate/granularity/customCadence/withResources)
     providers.ts             llm_providers table: get/setActiveProvider, getProvider, setProviderKey,
                              migrateAnthropicKeyFromSettings (one-time key copy). Managed in Settings.tsx.
     anthropic.ts             chat() → Anthropic Messages API. STILL used ONLY by planning.ts (web_search).
@@ -115,10 +120,13 @@ src/                         React + TS — ALL business logic
     goals.ts                 Goal CRUD + progress/granularity/plan helpers
     memory.ts                memories table CRUD + dedupe + relative-time purge
     briefing.ts              todayStr, getBriefing, generateBriefing, getOrGenerateBriefing
-    planning.ts              generatePlan — LLM-generated learning plan. Gated on the active provider's
-                             supports_web_search (DeepSeek/Qwen blocked with a switch-provider message).
-                             Branches: GPT → gptSearch.ts (Responses API); Claude → anthropic.ts
-                             chat(webSearch). Both yield a unified PlanDraft; downstream is shared.
+    planning.ts              generatePlan — LLM-generated plan for ANY goal (study/fitness/diet/travel/…),
+                             cadence-aware (daily/weekly/monthly/custom; one commitment per period, span set
+                             accordingly) and always saved AS A GOAL (so it survives closing the chat).
+                             Two modes from the PlanOptionsModal: withResources=true → web-search a researched
+                             plan (rich PlanDay + stored plan doc with real links; needs Claude/GPT — GPT via
+                             gptSearch.ts Responses API, Claude via anthropic.ts chat(webSearch)); false →
+                             no-search schedule-only plan (title + one-line detail per commitment, any provider).
     gptSearch.ts             researchWithSearch — OpenAI Responses API web_search (study-plan, GPT only).
     plans.ts                 plans table CRUD (createPlan, getPlanByGoal) + savePlanDay (edit one day +
                              sync its linked task; shared by the goal-side and task-side editors)
@@ -156,11 +164,11 @@ append-only and run exactly once each — **never edit an existing migration; ad
 | --- | --- |
 | `users` | The single local user (stable local id; Google email/name are display labels only). |
 | `google_tokens` | `access_token`, `refresh_token` (NOT NULL — empty string allowed), `expires_at`. One row per user. |
-| `goals` | Todolist goals: progress, done, plan, start_date, target_date, task_total, granularity, note (free-form detail). |
+| `goals` | Todolist goals: progress, done, plan, start_date, target_date, task_total, granularity (`daily`/`weekly`/`monthly`), note (free-form detail), discarded (soft-delete). |
 | `memories` | Durable facts/preferences (`kind`, `content`, `source`). |
 | `messages` | Full chat history (role, content). |
 | `briefings` | One daily briefing per `(user_id, date)`. |
-| `calendar` | Local commitments NOT synced to Google (date, time, source, done, goal_id, span, note). |
+| `calendar` | Local commitments NOT synced to Google (date, time, source, done, goal_id, span [`week`/`month`/NULL], note, discarded [soft-delete]). |
 | `plans` | Learning/weekly plan documents linked to a goal. |
 | `inbox_scans` | Cached daily inbox-task scan per `(user_id, date)`. |
 | `microsoft_tokens` | Microsoft (Teams/Graph) OAuth tokens. Same shape/convention as `google_tokens`. |
@@ -168,7 +176,8 @@ append-only and run exactly once each — **never edit an existing migration; ad
 
 Migration versions so far: 1 initial · 2 calendar · 3 goal target_date · 4 task↔goal link · 5 weekly
 granularity · 6 plans · 7 inbox_scans · 8 microsoft_tokens · 9 llm_providers · 10 goal/task detail note ·
-11 goal start_date · 12 active-list indexes. **Next migration = version 13.**
+11 goal start_date · 12 active-list indexes · 13 soft-delete (`discarded` on goals + calendar).
+**Next migration = version 14.**
 
 ---
 
@@ -302,12 +311,15 @@ platform (Entra) + Microsoft Graph, not Google OAuth.
 - **Run inside Tauri** (`npm run tauri dev`), never plain Vite — DB calls fail otherwise.
 - **TS owns logic; Rust is the shell.** Resist adding logic to Rust.
 - **Migrations are append-only and versioned.** SQLite has no `ADD COLUMN IF NOT EXISTS`; rely on the
-  version guard. Next is version 13.
+  version guard. Next is version 14.
+- **Soft-delete:** the × button sets `discarded = 1` (recoverable from Archive → Discarded), it does NOT
+  hard-delete. EVERY active/completed list query must include `AND discarded = 0`; only the Archive's
+  "Delete forever" hard-deletes. Discarding a goal also discards its linked tasks (and restore reverses it).
 - **Local identity vs. Google identity are separate.** The app keys everything off a stable local
   user id (`store.ts` / `ensureLocalUser`); Google email/name are display labels only — never use them
   as ownership keys.
 - **Secrets:** `.env` and `*.db` and `settings.json` are gitignored. Never commit keys/tokens.
-- **Git:** current branch `add-file-staging`. Commit/push only when the user asks; if asked, follow
+- **Git:** current branch `main`. Commit/push only when the user asks; if asked, follow
   the repo's existing commit style.
 - **User-facing errors** go through `errors.ts` `friendlyError`.
 - **Model:** when changing LLM calls, keep using current Claude models (`claude-sonnet-4-6` today;

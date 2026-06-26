@@ -5,7 +5,7 @@ import {
   createCommitment,
   updateCommitment,
   setCommitmentDone,
-  deleteCommitment,
+  setCommitmentDiscarded,
 } from "../lib/localCalendar";
 import { getPlanByGoal, savePlanDay } from "../lib/plans";
 import { openExternal } from "../lib/openExternal";
@@ -46,6 +46,22 @@ function formatDay(date: string): string {
 /** "Week of Jun 22 – Jun 28" for a weekly task (Monday → Sunday). */
 function formatWeek(weekStart: string): string {
   return `Week of ${formatDay(weekStart)} – ${formatDay(addDays(weekStart, 6))}`;
+}
+
+/** "June 2026" for a monthly task (anchored on the 1st). */
+function formatMonth(monthStart: string): string {
+  const d = new Date(`${monthStart}T00:00:00`);
+  if (isNaN(d.getTime())) return monthStart;
+  return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+}
+
+/** The last day (YYYY-MM-DD) of the month a date falls in. */
+function endOfMonth(date: string): string {
+  const d = new Date(`${date}T00:00:00`);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, "0")}-${String(
+    last.getDate()
+  ).padStart(2, "0")}`;
 }
 
 // On completion, a task shows its crossed-out state, then fades out and is
@@ -179,8 +195,11 @@ export default function LocalCalendar({
     }, REMOVE_MS);
   }
 
+  // The × soft-deletes: the task moves to Archive → Discarded (recoverable),
+  // rather than being permanently deleted.
   async function remove(id: string) {
-    await deleteCommitment(id);
+    await setCommitmentDiscarded(id, true);
+    onTaskToggled?.(); // keep goal progress / other panels in sync
     refresh();
   }
 
@@ -227,8 +246,9 @@ export default function LocalCalendar({
   async function saveEdit(c: Commitment) {
     await updateCommitment(c.id, {
       title: eTitle.trim() || c.title,
-      // Weekly tasks anchor on their Monday; leave that date alone here.
-      date: c.span === "week" ? c.date : eDate || c.date,
+      // Period tasks anchor on their start (week → Monday, month → 1st); leave
+      // that date alone here.
+      date: c.span === "week" || c.span === "month" ? c.date : eDate || c.date,
       time: eTime || null,
       note: eNote,
     });
@@ -299,7 +319,7 @@ export default function LocalCalendar({
               <input
                 type="date"
                 value={eDate}
-                disabled={c.span === "week"}
+                disabled={c.span === "week" || c.span === "month"}
                 onChange={(e) => setEDate(e.target.value)}
                 className="selectable flex-1 rounded-md border border-ink/20 bg-white/70 px-2 py-1 font-mono text-[11px] text-ink/70 transition focus:border-gold focus:outline-none disabled:opacity-50"
               />
@@ -337,7 +357,12 @@ export default function LocalCalendar({
     }
 
     const isWeekly = c.span === "week";
-    const overdue = isWeekly ? addDays(c.date, 6) < today : c.date < today;
+    const isMonthly = c.span === "month";
+    const overdue = isWeekly
+      ? addDays(c.date, 6) < today
+      : isMonthly
+        ? endOfMonth(c.date) < today
+        : c.date < today;
     const canExpand = expandable(c);
     return (
       <li
@@ -370,7 +395,11 @@ export default function LocalCalendar({
               overdue ? "font-bold text-gold-deep" : "text-ink/40"
             }`}
           >
-            {isWeekly ? formatWeek(c.date) : formatDate(c.date)}
+            {isMonthly
+              ? formatMonth(c.date)
+              : isWeekly
+                ? formatWeek(c.date)
+                : formatDate(c.date)}
             {c.time ? ` · ${c.time}` : ""}
             {overdue ? " · overdue" : ""}
           </p>

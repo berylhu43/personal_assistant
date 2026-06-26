@@ -18,7 +18,6 @@ const KEY_CONSOLIDATED = "data_consolidated_v1";
 const KEY_RELATIVE_PURGED = "memories_purged_relative_v1";
 const KEY_TITLES_CLEANED = "titles_deemojified_v1";
 const KEY_PROVIDER_KEY_MIGRATED = "provider_key_migrated_v1";
-const KEY_PENDING_PLAN = "pending_plan";
 
 export async function getApiKey(): Promise<string | null> {
   const s = await store();
@@ -87,23 +86,23 @@ export async function setProviderKeyMigrated(): Promise<void> {
   await s.set(KEY_PROVIDER_KEY_MIGRATED, true);
 }
 
-/** A learning-plan request the assistant asked the user to confirm. */
+// The cadence a plan is scheduled at. "custom" = an irregular rhythm the user
+// typed (e.g. "twice a week"); the model resolves it to explicit dated tasks.
+export type PlanGranularity = "daily" | "weekly" | "monthly" | "custom";
+
+/**
+ * The confirmed options for generating a plan, collected from the plan-options
+ * modal and handed to `generatePlan`. (The model only proposes topic/targetDate
+ * + a suggested cadence in its `plan-request` block; the user picks the rest.)
+ */
 export interface PendingPlan {
   topic: string;
   targetDate?: string;
-}
-
-export async function getPendingPlan(): Promise<PendingPlan | null> {
-  const s = await store();
-  return (await s.get<PendingPlan>(KEY_PENDING_PLAN)) ?? null;
-}
-
-export async function setPendingPlan(p: PendingPlan): Promise<void> {
-  const s = await store();
-  await s.set(KEY_PENDING_PLAN, p);
-}
-
-export async function clearPendingPlan(): Promise<void> {
-  const s = await store();
-  await s.delete(KEY_PENDING_PLAN);
+  // The cadence the user chose; defaults to "daily" downstream when omitted.
+  granularity?: PlanGranularity;
+  // Free-text rhythm when granularity === "custom" (e.g. "every other day").
+  customCadence?: string;
+  // Whether to web-search real resources/links (heavy path) or just lay out a
+  // schedule (lightweight, no search). Defaults to true downstream.
+  withResources?: boolean;
 }

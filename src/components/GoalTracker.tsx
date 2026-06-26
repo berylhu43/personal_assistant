@@ -7,13 +7,14 @@ import {
   setGoalDone,
   setGoalGranularity,
   setGoalTaskTotal,
-  deleteGoal,
+  setGoalDiscarded,
 } from "../lib/goals";
 import {
   createCommitment,
   listByGoal,
   updateCommitment,
   setTasksDoneByGoal,
+  setTasksDiscardedByGoal,
 } from "../lib/localCalendar";
 import { getPlanByGoal, savePlanDay } from "../lib/plans";
 import { openExternal } from "../lib/openExternal";
@@ -302,8 +303,12 @@ export default function GoalTracker({
     await setGoalProgress(g.id, value);
   }
 
+  // The × soft-deletes: the goal and its linked tasks move to Archive →
+  // Discarded (recoverable), rather than being permanently deleted.
   async function remove(id: string) {
-    await deleteGoal(id);
+    await setGoalDiscarded(id, true);
+    await setTasksDiscardedByGoal(id, true);
+    onTasksChanged?.(); // its tasks drop out of Upcoming
     refresh();
   }
 

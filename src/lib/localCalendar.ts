@@ -14,8 +14,9 @@ function rowToCommitment(r: CommitmentRow): Commitment {
     done: r.done === 1,
     source: r.source,
     goalId: r.goal_id,
-    span: r.span === "week" ? "week" : null,
+    span: r.span === "week" ? "week" : r.span === "month" ? "month" : null,
     note: r.note ?? null,
+    discarded: r.discarded === 1,
     createdAt: r.created_at,
   };
 }
@@ -26,16 +27,27 @@ function rowToCommitment(r: CommitmentRow): Commitment {
  */
 export async function listCompletedTasks(userId: string): Promise<Commitment[]> {
   const rows = await select<CommitmentRow>(
-    `SELECT * FROM calendar WHERE user_id = ?1 AND done = 1 ORDER BY created_at DESC`,
+    `SELECT * FROM calendar WHERE user_id = ?1 AND done = 1 AND discarded = 0
+     ORDER BY created_at DESC`,
     [userId]
   );
   return rows.map(rowToCommitment);
 }
 
-/** All commitments linked to a goal, date-ascending (for the goal's detail view). */
+/** Soft-deleted tasks for the Archive's Discarded section, newest-first. */
+export async function listDiscardedTasks(userId: string): Promise<Commitment[]> {
+  const rows = await select<CommitmentRow>(
+    `SELECT * FROM calendar WHERE user_id = ?1 AND discarded = 1
+     ORDER BY created_at DESC`,
+    [userId]
+  );
+  return rows.map(rowToCommitment);
+}
+
+/** All (non-discarded) commitments linked to a goal, date-ascending. */
 export async function listByGoal(goalId: string): Promise<Commitment[]> {
   const rows = await select<CommitmentRow>(
-    `SELECT * FROM calendar WHERE goal_id = ?1
+    `SELECT * FROM calendar WHERE goal_id = ?1 AND discarded = 0
      ORDER BY date ASC, COALESCE(time, '99:99') ASC`,
     [goalId]
   );
@@ -45,7 +57,7 @@ export async function listByGoal(goalId: string): Promise<Commitment[]> {
 /** Open commitments, soonest first (overdue ones surface at the top). */
 export async function listUpcoming(userId: string): Promise<Commitment[]> {
   const rows = await select<CommitmentRow>(
-    `SELECT * FROM calendar WHERE user_id = ?1 AND done = 0
+    `SELECT * FROM calendar WHERE user_id = ?1 AND done = 0 AND discarded = 0
      ORDER BY date ASC, COALESCE(time, '99:99') ASC LIMIT 50`,
     [userId]
   );
@@ -82,16 +94,17 @@ function thisSundayStr(): string {
 /**
  * What the Upcoming panel lists. Date-ascending. Open tasks only.
  * - Daily / one-off (span IS NULL): overdue + today + tomorrow (date <= tomorrow).
- * - Weekly (span = 'week'): the week containing today, plus overdue past weeks
- *   (a weekly task's date is its Monday, so date <= today covers current+overdue
- *   while excluding future weeks).
+ * - Weekly (span = 'week') / Monthly (span = 'month'): the period containing
+ *   today, plus overdue past periods. A period task's date is its start (the
+ *   Monday for a week, the 1st for a month), so date <= today covers
+ *   current+overdue while excluding future periods.
  */
 export async function listThroughTomorrow(userId: string): Promise<Commitment[]> {
   const rows = await select<CommitmentRow>(
     `SELECT * FROM calendar
-     WHERE user_id = ?1 AND done = 0 AND (
-       (COALESCE(span, '') != 'week' AND date <= ?2) OR
-       (span = 'week' AND date <= ?3)
+     WHERE user_id = ?1 AND done = 0 AND discarded = 0 AND (
+       ((COALESCE(span, '') NOT IN ('week', 'month')) AND date <= ?2) OR
+       (span IN ('week', 'month') AND date <= ?3)
      )
      ORDER BY date ASC, COALESCE(time, '99:99') ASC LIMIT 50`,
     [userId, tomorrowStr(), todayStr()]
@@ -109,7 +122,7 @@ export async function listThroughTomorrow(userId: string): Promise<Commitment[]>
 export async function listLaterThisWeek(userId: string): Promise<Commitment[]> {
   const rows = await select<CommitmentRow>(
     `SELECT * FROM calendar
-     WHERE user_id = ?1 AND done = 0 AND COALESCE(source, '') != 'goal'
+     WHERE user_id = ?1 AND done = 0 AND discarded = 0 AND COALESCE(source, '') != 'goal'
        AND date > ?2 AND date <= ?3
      ORDER BY date ASC, COALESCE(time, '99:99') ASC LIMIT 50`,
     [userId, tomorrowStr(), thisSundayStr()]
@@ -127,7 +140,7 @@ export async function listSingleUpcomingThisWeek(
 ): Promise<Commitment[]> {
   const rows = await select<CommitmentRow>(
     `SELECT * FROM calendar
-     WHERE user_id = ?1 AND done = 0 AND COALESCE(source, '') != 'goal'
+     WHERE user_id = ?1 AND done = 0 AND discarded = 0 AND COALESCE(source, '') != 'goal'
        AND date > ?2 AND date <= ?3
      ORDER BY date ASC, COALESCE(time, '99:99') ASC LIMIT 50`,
     [userId, todayStr(), thisSundayStr()]
@@ -141,7 +154,7 @@ export async function listTodayAndOverdue(
   onDate: string
 ): Promise<Commitment[]> {
   const rows = await select<CommitmentRow>(
-    `SELECT * FROM calendar WHERE user_id = ?1 AND done = 0 AND date <= ?2
+    `SELECT * FROM calendar WHERE user_id = ?1 AND done = 0 AND discarded = 0 AND date <= ?2
      ORDER BY date ASC, COALESCE(time, '99:99') ASC`,
     [userId, onDate]
   );
@@ -155,14 +168,15 @@ export async function createCommitment(input: {
   time?: string | null;
   source?: string;
   goalId?: string | null;
-  span?: "week" | null;
+  span?: "week" | "month" | null;
   note?: string | null;
 }): Promise<string> {
   const title = stripEmoji(input.title);
   // Dedupe on title + date (case/whitespace-insensitive title).
   const existing = await selectOne<{ id: string; goal_id: string | null }>(
     `SELECT id, goal_id FROM calendar
-     WHERE user_id = ?1 AND lower(trim(title)) = lower(trim(?2)) AND date = ?3 LIMIT 1`,
+     WHERE user_id = ?1 AND lower(trim(title)) = lower(trim(?2)) AND date = ?3
+       AND discarded = 0 LIMIT 1`,
     [input.userId, title, input.date]
   );
   if (existing) {
@@ -248,6 +262,25 @@ export async function deleteCommitment(id: string): Promise<void> {
   await execute(`DELETE FROM calendar WHERE id = ?1`, [id]);
 }
 
+/** Soft-delete / restore a task (× → discarded; Archive restore → active). */
+export async function setCommitmentDiscarded(
+  id: string,
+  discarded: boolean
+): Promise<void> {
+  await execute(`UPDATE calendar SET discarded = ?1 WHERE id = ?2`, [
+    discarded ? 1 : 0,
+    id,
+  ]);
+  // Recompute the linked goal's progress (a discarded task drops out of it).
+  const row = await selectOne<{ goal_id: string | null }>(
+    `SELECT goal_id FROM calendar WHERE id = ?1`,
+    [id]
+  );
+  if (row?.goal_id) {
+    await recomputeGoalProgress(row.goal_id);
+  }
+}
+
 /** Mark every task linked to a goal done/undone (when the goal itself is). */
 export async function setTasksDoneByGoal(
   goalId: string,
@@ -255,6 +288,21 @@ export async function setTasksDoneByGoal(
 ): Promise<void> {
   await execute(`UPDATE calendar SET done = ?1 WHERE goal_id = ?2`, [
     done ? 1 : 0,
+    goalId,
+  ]);
+}
+
+/**
+ * Soft-delete / restore every task linked to a goal — used when the goal itself
+ * is discarded/restored, so its plan tasks travel with it (out of the active
+ * lists into Archive → Discarded, and back).
+ */
+export async function setTasksDiscardedByGoal(
+  goalId: string,
+  discarded: boolean
+): Promise<void> {
+  await execute(`UPDATE calendar SET discarded = ?1 WHERE goal_id = ?2`, [
+    discarded ? 1 : 0,
     goalId,
   ]);
 }

@@ -32,15 +32,22 @@ function rowToGoal(r: GoalRow): Goal {
     startDate: r.start_date ?? null,
     targetDate: r.target_date,
     taskTotal: r.task_total,
-    granularity: r.granularity === "weekly" ? "weekly" : "daily",
+    granularity:
+      r.granularity === "weekly"
+        ? "weekly"
+        : r.granularity === "monthly"
+          ? "monthly"
+          : "daily",
     note: r.note ?? null,
+    discarded: r.discarded === 1,
     createdAt: r.created_at,
   };
 }
 
 export async function listGoals(userId: string): Promise<Goal[]> {
   const rows = await select<GoalRow>(
-    `SELECT * FROM goals WHERE user_id = ?1 ORDER BY done ASC, created_at DESC`,
+    `SELECT * FROM goals WHERE user_id = ?1 AND discarded = 0
+     ORDER BY done ASC, created_at DESC`,
     [userId]
   );
   return rows.map(rowToGoal);
@@ -58,7 +65,18 @@ export async function getGoalById(id: string): Promise<Goal | null> {
  */
 export async function listCompletedGoals(userId: string): Promise<Goal[]> {
   const rows = await select<GoalRow>(
-    `SELECT * FROM goals WHERE user_id = ?1 AND done = 1 ORDER BY created_at DESC`,
+    `SELECT * FROM goals WHERE user_id = ?1 AND done = 1 AND discarded = 0
+     ORDER BY created_at DESC`,
+    [userId]
+  );
+  return rows.map(rowToGoal);
+}
+
+/** Soft-deleted goals for the Archive's Discarded section, newest-first. */
+export async function listDiscardedGoals(userId: string): Promise<Goal[]> {
+  const rows = await select<GoalRow>(
+    `SELECT * FROM goals WHERE user_id = ?1 AND discarded = 1
+     ORDER BY created_at DESC`,
     [userId]
   );
   return rows.map(rowToGoal);
@@ -166,10 +184,10 @@ export async function setGoalTaskTotal(
   await execute(`UPDATE goals SET task_total = ?1 WHERE id = ?2`, [n, goalId]);
 }
 
-/** Set whether a goal's linked tasks are daily or weekly. */
+/** Set whether a goal's linked tasks are daily, weekly, or monthly. */
 export async function setGoalGranularity(
   goalId: string,
-  granularity: "daily" | "weekly"
+  granularity: "daily" | "weekly" | "monthly"
 ): Promise<void> {
   await execute(`UPDATE goals SET granularity = ?1 WHERE id = ?2`, [
     granularity,
@@ -189,7 +207,7 @@ export async function recomputeGoalProgress(goalId: string): Promise<void> {
   if (!goal || goal.task_total <= 0) return;
 
   const row = await selectOne<{ c: number }>(
-    `SELECT count(*) AS c FROM calendar WHERE goal_id = ?1 AND done = 1`,
+    `SELECT count(*) AS c FROM calendar WHERE goal_id = ?1 AND done = 1 AND discarded = 0`,
     [goalId]
   );
   const done = row?.c ?? 0;
@@ -234,6 +252,17 @@ export async function setGoalDone(id: string, done: boolean): Promise<void> {
   await execute(`UPDATE goals SET done = ?1, progress = ?2 WHERE id = ?3`, [
     done ? 1 : 0,
     done ? 100 : 0,
+    id,
+  ]);
+}
+
+/** Soft-delete / restore a goal (× → discarded; Archive restore → active). */
+export async function setGoalDiscarded(
+  id: string,
+  discarded: boolean
+): Promise<void> {
+  await execute(`UPDATE goals SET discarded = ?1 WHERE id = ?2`, [
+    discarded ? 1 : 0,
     id,
   ]);
 }

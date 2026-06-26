@@ -1,10 +1,19 @@
 import { useEffect, useState } from "react";
-import { listCompletedGoals, setGoalDone, deleteGoal } from "../lib/goals";
+import {
+  listCompletedGoals,
+  listDiscardedGoals,
+  setGoalDone,
+  setGoalDiscarded,
+  deleteGoal,
+} from "../lib/goals";
 import {
   listCompletedTasks,
+  listDiscardedTasks,
   setCommitmentDone,
-  deleteCommitment,
+  setCommitmentDiscarded,
   setTasksDoneByGoal,
+  setTasksDiscardedByGoal,
+  deleteCommitment,
 } from "../lib/localCalendar";
 import LinkifiedText from "./LinkifiedText";
 import type { Goal, Commitment } from "../lib/types";
@@ -34,18 +43,24 @@ export default function Archive({
 }) {
   const [goals, setGoals] = useState<Goal[]>([]);
   const [tasks, setTasks] = useState<Commitment[]>([]);
+  const [discardedGoals, setDiscardedGoals] = useState<Goal[]>([]);
+  const [discardedTasks, setDiscardedTasks] = useState<Commitment[]>([]);
   const [loading, setLoading] = useState(true);
   // Two-step delete: holds the id awaiting confirmation.
   const [confirmId, setConfirmId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
-    const [g, t] = await Promise.all([
+    const [g, t, dg, dt] = await Promise.all([
       listCompletedGoals(userId).catch(() => [] as Goal[]),
       listCompletedTasks(userId).catch(() => [] as Commitment[]),
+      listDiscardedGoals(userId).catch(() => [] as Goal[]),
+      listDiscardedTasks(userId).catch(() => [] as Commitment[]),
     ]);
     setGoals(g);
     setTasks(t);
+    setDiscardedGoals(dg);
+    setDiscardedTasks(dt);
     setLoading(false);
   }
 
@@ -67,6 +82,23 @@ export default function Archive({
   // completed goal it belonged to also returns to active).
   async function restoreTask(c: Commitment) {
     await setCommitmentDone(c.id, false);
+    onRestored();
+    await load();
+  }
+
+  // Un-discard a goal (× → restore): the goal AND its linked tasks return to the
+  // active lists, with whatever done/progress state they had before discarding.
+  async function undiscardGoal(g: Goal) {
+    await setGoalDiscarded(g.id, false);
+    await setTasksDiscardedByGoal(g.id, false);
+    onRestored();
+    await load();
+  }
+
+  // Un-discard a task: it returns to the active lists (and its goal's progress
+  // is recomputed inside setCommitmentDiscarded).
+  async function undiscardTask(c: Commitment) {
+    await setCommitmentDiscarded(c.id, false);
     onRestored();
     await load();
   }
@@ -246,6 +278,83 @@ export default function Archive({
                 </ul>
               )}
             </div>
+
+            {/* ---- Discarded (soft-deleted via ×) ---- */}
+            {(discardedGoals.length > 0 || discardedTasks.length > 0) && (
+              <div className="mt-8 border-t border-ink/10 pt-5">
+                <div className="mb-1 flex items-center gap-1.5">
+                  <span className="h-1 w-1 rounded-full bg-ink/30" />
+                  <span className="eyebrow">Discarded</span>
+                </div>
+                <p className="mb-3 font-sans text-xs leading-relaxed text-ink/55">
+                  Removed with ×. Restore to bring it back, or delete it forever.
+                </p>
+
+                {discardedGoals.length > 0 && (
+                  <ul className="space-y-2.5">
+                    {discardedGoals.map((g) => {
+                      const range = goalRange(g);
+                      return (
+                        <li
+                          key={g.id}
+                          className="rounded-xl border border-ink/10 bg-white/40 px-3 py-2.5"
+                        >
+                          <div className="flex items-start gap-2">
+                            <span className="min-w-0 flex-1 font-sans text-sm text-ink/55">
+                              {g.title}
+                            </span>
+                            {range && (
+                              <span className="shrink-0 font-mono text-[10px] text-ink/40">
+                                {range}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-2 flex items-center gap-3">
+                            <button
+                              onClick={() => void undiscardGoal(g)}
+                              className={restoreBtn}
+                            >
+                              Restore
+                            </button>
+                            <DeleteControl id={g.id} onDelete={() => void removeGoal(g.id)} />
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+
+                {discardedTasks.length > 0 && (
+                  <ul className="mt-2.5 space-y-2.5">
+                    {discardedTasks.map((c) => (
+                      <li
+                        key={c.id}
+                        className="rounded-xl border border-ink/10 bg-white/40 px-3 py-2.5"
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className="min-w-0 flex-1 font-sans text-sm text-ink/55">
+                            {c.title}
+                          </span>
+                          <span className="shrink-0 font-mono text-[10px] text-ink/40">
+                            {fmt(c.date)}
+                            {c.time ? ` · ${c.time}` : ""}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex items-center gap-3">
+                          <button
+                            onClick={() => void undiscardTask(c)}
+                            className={restoreBtn}
+                          >
+                            Restore
+                          </button>
+                          <DeleteControl id={c.id} onDelete={() => void removeTask(c.id)} />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </>
         )}
 

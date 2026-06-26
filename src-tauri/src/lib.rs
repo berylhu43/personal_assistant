@@ -314,6 +314,23 @@ CREATE INDEX IF NOT EXISTS idx_goals_user_done_created
   ON goals(user_id, done, created_at DESC);
 "#,
         },
+        Migration {
+            version: 13,
+            description: "soft-delete (recoverable 'discarded' state) for goals and tasks",
+            kind: MigrationKind::Up,
+            // The × button now soft-deletes: discarded = 1 hides the row from the
+            // active AND completed lists and surfaces it under Archive → Discarded,
+            // from which it can be restored (discarded = 0) or hard-deleted. All
+            // active/completed queries gain "AND discarded = 0".
+            sql: r#"
+ALTER TABLE goals ADD COLUMN discarded INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE calendar ADD COLUMN discarded INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_goals_user_discarded
+  ON goals(user_id, discarded);
+CREATE INDEX IF NOT EXISTS idx_calendar_user_discarded
+  ON calendar(user_id, discarded);
+"#,
+        },
     ]
 }
 

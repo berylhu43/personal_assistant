@@ -12,6 +12,7 @@ import {
 import { createCommitment } from "../lib/localCalendar";
 import { MissingApiKeyError } from "../lib/anthropic";
 import { friendlyError } from "../lib/errors";
+import PlanOptionsModal, { type PlanOptions } from "./PlanOptionsModal";
 import type { PendingPlan } from "../lib/store";
 import type {
   CalendarEvent,
@@ -83,6 +84,13 @@ export default function ChatPanel({
   const [fileItems, setFileItems] = useState<AssignmentCandidate[]>([]);
   const [fileCourse, setFileCourse] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
+  // A plan the assistant recognized — opens the plan-options pop-up (cadence +
+  // resources) before anything is generated.
+  const [planReq, setPlanReq] = useState<{
+    topic: string;
+    targetDate?: string;
+    granularity?: "daily" | "weekly" | "monthly";
+  } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -140,19 +148,18 @@ export default function ChatPanel({
 
     try {
       const result = await runChatTurn(userId, text, { events, emails, teams });
-      // A learning-plan confirmation: hand off to App (survives collapse). The
-      // App-driven indicator + result/Download will render below.
-      if (result.planConfirmed) {
-        console.log("[plan-debug] ChatPanel: planConfirmed → onPlanConfirmed");
-        onPlanConfirmed(result.planConfirmed);
-        return;
-      }
       setMessages((prev) => [
         ...prev,
         { id: crypto.randomUUID(), role: "assistant", content: result.reply },
       ]);
       if (result.createdGoal) onGoalCreated();
       if (result.createdCommitment) onCommitmentCreated();
+      // A recognized plan request: open the options pop-up. Generation is
+      // deferred to App.runPlan (survives collapse) once the user picks.
+      if (result.planRequest) {
+        console.log("[plan-debug] ChatPanel: planRequest → open options modal");
+        setPlanReq(result.planRequest);
+      }
     } catch (e) {
       console.error("chat turn failed:", e);
       if (e instanceof MissingApiKeyError) onNeedApiKey();
@@ -287,6 +294,21 @@ export default function ChatPanel({
     }
   }
 
+  // The user picked cadence + resources in the pop-up → hand off to App for
+  // generation (survives collapse). The plan saves itself as a goal.
+  function confirmPlan(opts: PlanOptions) {
+    if (!planReq) return;
+    const pending: PendingPlan = {
+      topic: planReq.topic,
+      targetDate: planReq.targetDate,
+      granularity: opts.granularity,
+      customCadence: opts.customCadence,
+      withResources: opts.withResources,
+    };
+    setPlanReq(null);
+    onPlanConfirmed(pending);
+  }
+
   async function addFileItem(item: AssignmentCandidate) {
     const title = fileCourse ? `${fileCourse}: ${item.title}` : item.title;
     await createCommitment({
@@ -331,7 +353,15 @@ export default function ChatPanel({
   }
 
   return (
-    <div className="flex h-full flex-col bg-gradient-to-b from-white to-paper/40">
+    <div className="relative flex h-full flex-col bg-gradient-to-b from-white to-paper/40">
+      {planReq && (
+        <PlanOptionsModal
+          topic={planReq.topic}
+          suggested={planReq.granularity}
+          onSubmit={confirmPlan}
+          onCancel={() => setPlanReq(null)}
+        />
+      )}
       <header className="no-drag flex items-center justify-between border-b border-ink/10 px-4 py-2.5">
         <div className="flex items-center gap-1.5">
           <span className="h-1 w-1 rounded-full bg-gold" />
@@ -403,7 +433,7 @@ export default function ChatPanel({
           <div className="flex justify-start">
             <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-gold/40 bg-gold/10 px-3.5 py-2 font-sans text-xs text-ink/70 shadow-memo">
               <span className="h-1.5 w-1.5 animate-ping rounded-full bg-gold" />
-              Searching and building your plan…
+              Building your plan…
             </div>
           </div>
         )}
