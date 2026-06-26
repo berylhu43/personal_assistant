@@ -57,6 +57,17 @@ function expiresAtIso(expiresAtSeconds: number | undefined): string {
 export async function signIn(): Promise<User> {
   const localId = await getLocalUserId();
 
+  // Guarantee the parent users row exists before writing google_tokens (whose
+  // user_id is a FK → users.id). On a fresh machine, initApp/ensureLocalUser
+  // normally seeds this, but if startup init failed we'd otherwise hit a
+  // FOREIGN KEY constraint (SQLite 787) here. Idempotent — same insert as
+  // ensureLocalUser (inlined to avoid an auth→init→chat→google→auth cycle).
+  await execute(
+    `INSERT INTO users (id, email, name) VALUES (?1, 'local@assistant', NULL)
+     ON CONFLICT(id) DO NOTHING`,
+    [localId]
+  );
+
   // Offline access + forced consent (so Google returns a refresh token, and
   // re-issues it on every authorization) is requested in the *Rust* plugin: it
   // hardcodes access_type=offline / prompt=consent on the OAuth URL. The upstream

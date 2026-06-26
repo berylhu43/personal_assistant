@@ -206,6 +206,16 @@ export async function signInMicrosoft(): Promise<void> {
     throw new Error("VITE_MS_CLIENT_ID is not set — cannot connect Teams");
   }
   const localId = await getLocalUserId();
+
+  // Guarantee the parent users row exists before writing microsoft_tokens (FK →
+  // users.id) — avoids a FOREIGN KEY constraint (SQLite 787) if startup init
+  // didn't seed the local user. Idempotent.
+  await execute(
+    `INSERT INTO users (id, email, name) VALUES (?1, 'local@assistant', NULL)
+     ON CONFLICT(id) DO NOTHING`,
+    [localId]
+  );
+
   const { code, redirectUri } = await awaitAuthCode();
 
   const data = await tokenRequest({
