@@ -26,18 +26,31 @@ function rowToCommitment(r: CommitmentRow): Commitment {
  * timestamp exists). Served by the v12 (user_id, done, date) index.
  */
 export async function listCompletedTasks(userId: string): Promise<Commitment[]> {
+  // A task whose goal is also completed is represented by that goal in the
+  // Archive's Completed Goals list — so exclude it here (show the whole goal, not
+  // each sub-task). Tasks with no goal, or completed individually while the goal
+  // is still active, still show.
   const rows = await select<CommitmentRow>(
     `SELECT * FROM calendar WHERE user_id = ?1 AND done = 1 AND discarded = 0
+       AND (goal_id IS NULL
+            OR goal_id NOT IN (SELECT id FROM goals WHERE done = 1 AND discarded = 0))
      ORDER BY created_at DESC`,
     [userId]
   );
   return rows.map(rowToCommitment);
 }
 
-/** Soft-deleted tasks for the Archive's Discarded section, newest-first. */
+/**
+ * Soft-deleted tasks for the Archive's Discarded section, newest-first. Like
+ * Completed: a task whose goal is also discarded is represented by that goal in
+ * the Discarded Goals list, so it's excluded here (show the whole goal, not each
+ * sub-task). Individually-discarded tasks (goal still active) still show.
+ */
 export async function listDiscardedTasks(userId: string): Promise<Commitment[]> {
   const rows = await select<CommitmentRow>(
     `SELECT * FROM calendar WHERE user_id = ?1 AND discarded = 1
+       AND (goal_id IS NULL
+            OR goal_id NOT IN (SELECT id FROM goals WHERE discarded = 1))
      ORDER BY created_at DESC`,
     [userId]
   );
