@@ -20,18 +20,21 @@ function todayStr(): string {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-const SCAN_SYSTEM = `You scan a user's recent emails and extract ONLY concrete, actionable tasks the USER must personally do.
-Ignore newsletters, promotions, marketing, automated notifications, receipts, calendar invites, and FYI-only mail. If an email contains no real task for the user, omit it entirely.
+const SCAN_SYSTEM = `You scan a user's recent emails and extract items worth putting on their to-do / calendar list. TWO kinds qualify:
+1. ACTIONABLE TASKS the user must personally do (e.g. "Reply to Sam with Q3 numbers", "Submit the visa form").
+2. DATED EVENTS / COMMITMENTS the user should have on their calendar — flights, train/bus tickets, hotel or Airbnb check-in/check-out, reservations, appointments, interviews, deliveries with a date, bookings, or anything scheduled that involves the user (including from automated confirmations and itineraries).
+
+Ignore pure marketing: newsletters, promotions, sales/marketing blasts, and social notifications. Also ignore generic receipts that have no upcoming date. If an email has NEITHER a real task NOR a dated event for the user, omit it entirely.
 
 Return ONLY JSON of this exact shape (no prose):
 { "candidates": [ { "emailId": "...", "from": "...", "subject": "...", "task": { "title": "...", "date": "YYYY-MM-DD", "kind": "commitment" | "goal" } } ] }
 
 Rules:
-- title: a short, imperative description of what the user must do (e.g. "Reply to Sam with Q3 numbers", "Submit the visa form").
-- date: OPTIONAL — include only if the email implies a due/needed date. Resolve relative dates ("by Friday", "tomorrow") to ABSOLUTE dates using today's date. Omit if there is no clear date.
-- kind: "commitment" for a dated/discrete to-do (the default), "goal" for a larger ongoing objective.
+- title: a short PLAIN-TEXT description. For a task, make it imperative ("Submit the visa form"). For a dated event, name it concretely with key details ("Flight to SFO — UA 123 6:40am", "Hotel check-in: Marriott Seattle", "Dentist appointment 2pm").
+- date: include the relevant date whenever there is one — a flight/reservation/appointment date, or a task's due date. Resolve relative dates ("by Friday", "tomorrow") to ABSOLUTE dates using today's date. Omit only if there is genuinely no date.
+- kind: "commitment" for a dated/discrete item — use this for travel, reservations, appointments, and most tasks; "goal" only for a larger ongoing objective.
 - Do NOT suggest anything already in the ALREADY SAVED list (same underlying thing, regardless of wording or exact date).
-- When unsure whether something is a real task, OMIT it. An empty array is fine.
+- When unsure whether something is real and relevant to the user, OMIT it. An empty array is fine.
 - The "title" must be PLAIN TEXT — never include emoji, icons, or decorative symbols.`;
 
 /**

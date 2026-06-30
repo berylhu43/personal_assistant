@@ -196,16 +196,18 @@ function cleanBody(text: string): string {
 }
 
 /**
- * Unread inbox emails from the last 24h (max 10), with their plain-text body
- * extracted, cleaned, and truncated to ~1500 chars. Separate from
+ * Inbox emails from the last 24h (read or unread, max 20), with their plain-text
+ * body extracted, cleaned, and truncated to ~1500 chars. Read mail is included
+ * (not just unread) because actionable items — and dated confirmations like
+ * flights/reservations — are often already opened. Separate from
  * getPendingEmails (which the briefing still uses).
  */
 export async function getRecentEmailsWithBody(): Promise<EmailWithBody[]> {
   const headers = await authHeaders();
 
   const listParams = new URLSearchParams({
-    q: "is:unread in:inbox newer_than:1d",
-    maxResults: "10",
+    q: "in:inbox newer_than:1d",
+    maxResults: "20",
   });
   const listRes = await fetch(`${GMAIL_BASE}/users/me/messages?${listParams}`, {
     method: "GET",
