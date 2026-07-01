@@ -122,7 +122,9 @@ src/                         React + TS — ALL business logic
     briefing.ts              todayStr, getBriefing, generateBriefing, getOrGenerateBriefing
     planning.ts              generatePlan — LLM-generated plan for ANY goal (study/fitness/diet/travel/…),
                              cadence-aware (daily/weekly/monthly/custom; one commitment per period, span set
-                             accordingly) and always saved AS A GOAL (so it survives closing the chat).
+                             accordingly) and always saved AS A GOAL (so it survives closing the chat). If
+                             the plan-request carries a `goalId` (user asked to UPDATE an existing goal), it
+                             REGENERATES in place: wipes that goal's old tasks + plan doc, keeps its title.
                              Two modes from the PlanOptionsModal: withResources=true → web-search a researched
                              plan (rich PlanDay + stored plan doc with real links; needs Claude/GPT — GPT via
                              gptSearch.ts Responses API, Claude via anthropic.ts chat(webSearch)); false →

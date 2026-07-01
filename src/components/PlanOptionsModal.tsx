@@ -23,12 +23,15 @@ const CADENCES: { key: PlanGranularity; label: string }[] = [
 export default function PlanOptionsModal({
   topic,
   suggested,
+  updating = false,
   onSubmit,
   onCancel,
 }: {
   topic: string;
   // The cadence the assistant proposed (pre-selected; the user can change it).
   suggested?: "daily" | "weekly" | "monthly";
+  // True when regenerating an existing goal's plan (vs. creating a new one).
+  updating?: boolean;
   onSubmit: (opts: PlanOptions) => void;
   onCancel: () => void;
 }) {
@@ -51,7 +54,7 @@ export default function PlanOptionsModal({
   return (
     <div className="no-drag absolute inset-0 z-20 flex items-center justify-center bg-ink/30 px-5 backdrop-blur-[1px]">
       <div className="w-full max-w-sm rounded-2xl border border-ink/10 bg-cream p-4 shadow-memo">
-        <p className="eyebrow mb-0.5">Plan options</p>
+        <p className="eyebrow mb-0.5">{updating ? "Update plan" : "Plan options"}</p>
         <p className="mb-3 truncate font-sans text-sm font-medium text-ink" title={topic}>
           {topic}
         </p>
@@ -129,7 +132,7 @@ export default function PlanOptionsModal({
             disabled={!canSubmit}
             className="rounded-full bg-ink px-3.5 py-1.5 font-sans text-xs font-medium text-cream transition hover:bg-gold-deep disabled:opacity-40 disabled:hover:bg-ink"
           >
-            Create plan
+            {updating ? "Update plan" : "Create plan"}
           </button>
         </div>
       </div>

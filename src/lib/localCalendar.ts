@@ -275,6 +275,15 @@ export async function deleteCommitment(id: string): Promise<void> {
   await execute(`DELETE FROM calendar WHERE id = ?1`, [id]);
 }
 
+/**
+ * Hard-delete every task linked to a goal — used when REGENERATING a goal's plan
+ * (the old plan tasks are being replaced, so they shouldn't linger in Upcoming
+ * or the Discarded archive).
+ */
+export async function deleteTasksByGoal(goalId: string): Promise<void> {
+  await execute(`DELETE FROM calendar WHERE goal_id = ?1`, [goalId]);
+}
+
 /** Soft-delete / restore a task (× → discarded; Archive restore → active). */
 export async function setCommitmentDiscarded(
   id: string,

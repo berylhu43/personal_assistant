@@ -201,9 +201,10 @@ STEP 1 — clarify essentials IN TEXT first. If the request is missing CONTENT s
 
 STEP 2 — once you have enough, hand off. Reply with ONE short sentence acknowledging it and emit a \`plan-request\` block, then stop:
 \`\`\`plan-request
-{ "topic": "...", "targetDate": "YYYY-MM-DD", "granularity": "daily" | "weekly" | "monthly" }
+{ "topic": "...", "targetDate": "YYYY-MM-DD", "granularity": "daily" | "weekly" | "monthly", "goalId": "..." }
 \`\`\`
 The app then shows a small pop-up for the user to choose the cadence and whether to include researched resources/links, and generates+saves the plan as a goal. So do NOT ask about cadence or resources in text (the pop-up covers ONLY those two) — clarify CONTENT, not schedule/resources — and do NOT emit goal/commitment blocks for the plan. Put any decisions you settled (e.g. the chosen destination) into \`topic\` so the generator uses them.
+UPDATING an existing plan: if the user asks to CHANGE/redo/refine/regenerate the plan for a goal that is ALREADY in "Your current goals" (e.g. "make the LeetCode plan more concrete", "update each day's tasks"), set \`goalId\` to that goal's EXACT id from the list above and put the desired changes in \`topic\`. The app then REPLACES that goal's tasks in place (same goal, no duplicate). OMIT \`goalId\` for a brand-new plan. When \`goalId\` is set, don't worry about the title — the existing goal keeps its name.
 \`granularity\` is your SUGGESTED cadence (the user can change it in the pop-up): a SHORT range (up to ~3 weeks) → "daily"; a MEDIUM range (~3 weeks to ~4 months) → "weekly"; a LONG range (more than ~4 months) → "monthly". A long range should never be daily — that would be hundreds of tasks. \`targetDate\` is optional (omit if the user gave no deadline; then suggest "daily").
 
 1. Save a goal to the user's todo list:
@@ -316,7 +317,12 @@ interface ParsedActions {
   deleteGoals: string[];
   completeCommitments: string[];
   deleteCommitments: string[];
-  planRequest?: { topic: string; targetDate?: string; granularity?: PlanGranularity };
+  planRequest?: {
+    topic: string;
+    targetDate?: string;
+    granularity?: PlanGranularity;
+    goalId?: string;
+  };
 }
 
 const BLOCK_RE =
@@ -332,7 +338,12 @@ export function parseBlocks(raw: string): ParsedActions {
   const completeCommitments: string[] = [];
   const deleteCommitments: string[] = [];
   let planRequest:
-    | { topic: string; targetDate?: string; granularity?: PlanGranularity }
+    | {
+        topic: string;
+        targetDate?: string;
+        granularity?: PlanGranularity;
+        goalId?: string;
+      }
     | undefined;
 
   let match: RegExpExecArray | null;
@@ -346,6 +357,10 @@ export function parseBlocks(raw: string): ParsedActions {
           targetDate:
             typeof json.targetDate === "string" ? json.targetDate : undefined,
           granularity: asGranularity(json.granularity),
+          goalId:
+            typeof json.goalId === "string" && json.goalId.trim()
+              ? json.goalId.trim()
+              : undefined,
         };
       else if (kind === "add-event" && json.title && json.date) events.push(json);
       else if (kind === "goal" && json.title)
@@ -404,7 +419,12 @@ export interface ChatTurnResult {
   // Set when the assistant recognized a plan request. The caller opens the
   // plan-options pop-up (cadence + resources); after the user picks, the plan is
   // generated from a layer that survives collapse/unmount (see App.runPlan).
-  planRequest?: { topic: string; targetDate?: string; granularity?: PlanGranularity };
+  planRequest?: {
+    topic: string;
+    targetDate?: string;
+    granularity?: PlanGranularity;
+    goalId?: string;
+  };
 }
 
 /**

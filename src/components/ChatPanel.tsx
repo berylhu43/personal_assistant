@@ -90,6 +90,7 @@ export default function ChatPanel({
     topic: string;
     targetDate?: string;
     granularity?: "daily" | "weekly" | "monthly";
+    goalId?: string;
   } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -301,6 +302,7 @@ export default function ChatPanel({
     const pending: PendingPlan = {
       topic: planReq.topic,
       targetDate: planReq.targetDate,
+      goalId: planReq.goalId,
       granularity: opts.granularity,
       customCadence: opts.customCadence,
       withResources: opts.withResources,
@@ -358,6 +360,7 @@ export default function ChatPanel({
         <PlanOptionsModal
           topic={planReq.topic}
           suggested={planReq.granularity}
+          updating={!!planReq.goalId}
           onSubmit={confirmPlan}
           onCancel={() => setPlanReq(null)}
         />

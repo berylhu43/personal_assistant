@@ -26,6 +26,11 @@ export async function getPlanByGoal(goalId: string): Promise<PlanRow | null> {
   );
 }
 
+/** Remove all plan documents for a goal — used when regenerating its plan. */
+export async function deletePlansByGoal(goalId: string): Promise<void> {
+  await execute(`DELETE FROM plans WHERE goal_id = ?1`, [goalId]);
+}
+
 /** Rewrite a plan document's content (e.g. after editing a day in-place). */
 export async function updatePlanContent(
   id: string,

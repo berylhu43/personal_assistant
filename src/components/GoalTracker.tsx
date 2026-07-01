@@ -115,24 +115,26 @@ export default function GoalTracker({
   const [pdGoalId, setPdGoalId] = useState("");
   const [pdDay, setPdDay] = useState<PlanDay | null>(null);
 
-  async function toggleOpen(goal: Goal) {
-    const willOpen = openPlan !== goal.id;
-    setOpenPlan(willOpen ? goal.id : null);
-    if (willOpen && planDocs[goal.id] === undefined && goal.taskTotal > 0) {
-      try {
-        const row = await getPlanByGoal(goal.id);
-        const days = row ? (JSON.parse(row.content) as PlanDay[]) : [];
-        const list = Array.isArray(days) ? days : [];
-        setPlanDocs((m) => ({ ...m, [goal.id]: list }));
-        // No LLM plan document → it's a manual goal; show its linked daily tasks.
-        if (list.length === 0) {
-          const tasks = await listByGoal(goal.id);
-          setLinkedTasks((m) => ({ ...m, [goal.id]: tasks }));
-        }
-      } catch {
-        setPlanDocs((m) => ({ ...m, [goal.id]: [] }));
-      }
+  // Load (and cache) a goal's plan document (LLM plans) or its linked daily tasks
+  // (manual goals). Always fetches — callers clear the cache to force a reload
+  // after a regenerated/edited plan.
+  const loadDetail = useCallback(async (goalId: string, taskTotal: number) => {
+    if (taskTotal <= 0) return;
+    try {
+      const row = await getPlanByGoal(goalId);
+      const days = row ? (JSON.parse(row.content) as PlanDay[]) : [];
+      const list = Array.isArray(days) ? days : [];
+      setPlanDocs((m) => ({ ...m, [goalId]: list }));
+      // No LLM plan document → manual goal; show its linked daily tasks instead.
+      const tasks = list.length === 0 ? await listByGoal(goalId) : [];
+      setLinkedTasks((m) => ({ ...m, [goalId]: tasks }));
+    } catch {
+      setPlanDocs((m) => ({ ...m, [goalId]: [] }));
     }
+  }, []);
+
+  function toggleOpen(goal: Goal) {
+    setOpenPlan((cur) => (cur === goal.id ? null : goal.id));
   }
 
   const refresh = useCallback(() => {
@@ -141,7 +143,21 @@ export default function GoalTracker({
 
   useEffect(() => {
     refresh();
+    // A refresh may include a regenerated/edited plan — drop cached detail so the
+    // open goal re-loads fresh content (handled by the reload effect below).
+    setPlanDocs({});
+    setLinkedTasks({});
   }, [refresh, refreshKey]);
+
+  // Keep the open goal's detail loaded — re-fetches after the cache is cleared
+  // above (or after the goals list reloads), so a regenerated plan shows live.
+  useEffect(() => {
+    if (!openPlan) return;
+    const g = goals.find((x) => x.id === openPlan);
+    if (g && planDocs[openPlan] === undefined) {
+      void loadDetail(openPlan, g.taskTotal);
+    }
+  }, [goals, openPlan, planDocs, loadDetail]);
 
   function addDraftTask() {
     const t = stTitle.trim();

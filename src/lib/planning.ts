@@ -2,9 +2,15 @@ import { chat } from "./anthropic";
 import { openaiCompatAdapter, getActiveAdapter, type ProviderConfig } from "./llm";
 import { researchWithSearch } from "./gptSearch";
 import { getActiveProvider } from "./providers";
-import { saveGoal, setGoalGranularity, setGoalTaskTotal } from "./goals";
-import { createCommitment } from "./localCalendar";
-import { createPlan } from "./plans";
+import {
+  saveGoal,
+  setGoalGranularity,
+  setGoalTaskTotal,
+  getGoalById,
+  updateGoal,
+} from "./goals";
+import { createCommitment, deleteTasksByGoal } from "./localCalendar";
+import { createPlan, deletePlansByGoal } from "./plans";
 import type { PendingPlan } from "./store";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -392,9 +398,26 @@ export async function generatePlan(
         : null;
 
   // ---- Persist: goal + per-period commitments (+ plan doc when researched) ----
-  const title = String(goal.title);
-  console.log("[plan-debug] saveGoal…", title, targetDate);
-  const goalId = await saveGoal({ userId, title, targetDate });
+  // If the user asked to UPDATE an existing goal's plan, regenerate in place:
+  // keep the same goal (and its title), wipe its old plan tasks + document, and
+  // rebuild below. Otherwise create/upsert a goal by title as usual.
+  const existing = req.goalId ? await getGoalById(req.goalId) : null;
+  const updating = !!existing;
+  const title = existing ? existing.title : String(goal.title);
+
+  let goalId: string;
+  if (existing) {
+    goalId = existing.id;
+    console.log("[plan-debug] regenerating plan for goal", goalId, title);
+    await deleteTasksByGoal(goalId);
+    await deletePlansByGoal(goalId);
+    // Refresh the target date if the model/request settled a new one; keep the
+    // existing title (the user asked to update tasks, not rename the goal).
+    if (targetDate) await updateGoal(goalId, { targetDate });
+  } else {
+    console.log("[plan-debug] saveGoal…", title, targetDate);
+    goalId = await saveGoal({ userId, title, targetDate });
+  }
   await setGoalGranularity(goalId, c.storeGranularity);
 
   let count = 0;
@@ -427,9 +450,9 @@ export async function generatePlan(
     console.log("[plan-debug] plan document saved");
   }
 
-  const base = `Saved your ${title} plan — ${count} ${c.label} task${
-    count === 1 ? "" : "s"
-  }`;
+  const base = `${updating ? "Updated" : "Saved"} your ${title} plan — ${count} ${
+    c.label
+  } task${count === 1 ? "" : "s"}`;
   const reply = withResources
     ? usedSearch
       ? `${base} with resources and links.`

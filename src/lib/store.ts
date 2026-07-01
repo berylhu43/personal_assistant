@@ -98,6 +98,10 @@ export type PlanGranularity = "daily" | "weekly" | "monthly" | "custom";
 export interface PendingPlan {
   topic: string;
   targetDate?: string;
+  // Set when REGENERATING an existing goal's plan (id from "Your current goals").
+  // The plan replaces that goal's tasks/document in place instead of creating a
+  // new goal.
+  goalId?: string;
   // The cadence the user chose; defaults to "daily" downstream when omitted.
   granularity?: PlanGranularity;
   // Free-text rhythm when granularity === "custom" (e.g. "every other day").
