@@ -59,6 +59,14 @@ npm run tauri dev           # ALWAYS run inside Tauri, never `npm run dev`
 - Rust compile: `cd src-tauri && cargo check`
 - Production build: `npm run build` (runs `tsc && vite build`), full app: `npm run tauri build`
 
+**Distributable / release build:** `npm run tauri build` → artifacts in
+`src-tauri/target/release/bundle/` (macOS: `Assistant.app` + `Assistant_<version>_<arch>.dmg`). This
+is the packaged app the user runs day-to-day instead of `tauri dev` (no compiler/dev-server → runs
+cool). Build is per-OS/per-arch; there is **no** cross-platform CI. **Deferred decision (pick up
+here if asked to make the app easy for others to install):** a GitHub Releases workflow (Tauri's
+`tauri-action`) to auto-publish macOS/Windows/Linux installers on tagged releases — the user
+explicitly chose NOT to add this yet. Cloners currently build from source themselves.
+
 **Anything involving real Google sign-in or live Anthropic calls needs a human** — OAuth opens a
 browser and the Anthropic key is entered in-app, not in env.
 
@@ -134,6 +142,8 @@ src/                         React + TS — ALL business logic
                              sync its linked task; shared by the goal-side and task-side editors)
     planExport.ts            planToMarkdown, downloadPlan (export a plan to a .md file)
     distill.ts               distillConversation — summarize chat into durable memories
+    demo.ts                  IS_DEMO + seedDemoData — VITE_DEMO=1 opens a SEPARATE db (assistant-demo.db,
+                             see db.ts), seeds sample data, and App.tsx skips the Google gate (`npm run demo`)
     emailTasks.ts            scanInboxForTasks / getOrScanInbox / rescanInbox — cached daily inbox scan
     fileTasks.ts             pickDocument, extractText (pdfjs), extractAssignments — turn a doc into tasks
     localCalendar.ts         Local commitments CRUD + various "upcoming/this week" queries

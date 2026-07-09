@@ -39,7 +39,7 @@ and enter that provider's API key. Keys stay on your machine.
 - **Goals & tasks:** track goals with a progress bar, optional start/target
   dates, and linked tasks at **daily, weekly, or monthly** granularity. Tasks
   show up in the local calendar (Upcoming) as their dates arrive and drive the
-  goal's progress. Everything is editable inline.
+  goal's progress. Everything is editable inline. 
 - **Plans (any goal, not just study):** ask the assistant to build a plan —
   learning, fitness, diet, travel, a project, anything. It first clarifies the
   essentials in chat (e.g. a trip's destination/budget), then a small **pop-up**
@@ -50,6 +50,10 @@ and enter that provider's API key. Keys stay on your machine.
     schedule-only plan from the model's own knowledge (works with **any**
     provider). Either way the plan is **saved as a goal**, so it persists after
     you close the chat. Researched plans can be exported to Markdown.
+
+    You can also **update an existing plan** — ask to redo/refine a plan you
+    already have and it regenerates that same goal's tasks in place (no
+    duplicate).
 - **Local calendar:** dated commitments that live only on this machine (never
   synced to Google), with overdue highlighting and weekly/monthly task spans.
 - **Archive & recoverable delete:** checking a goal/task off **archives** it
@@ -57,9 +61,12 @@ and enter that provider's API key. Keys stay on your machine.
   area. From the Archive you can **Restore** either, or **Delete forever**
   (confirmed). Discarding a goal carries its tasks with it; restoring brings
   them back.
-- **Inbox & files:** the briefing surfaces task candidates scanned from recent
-  email (and Teams DMs/@mentions); you can also attach a PDF/txt/md (e.g. a
-  syllabus) and confirm extracted assignments into your calendar.
+- **Inbox & files:** the briefing surfaces candidates scanned from recent email
+  (and Teams DMs/@mentions) — both **to-dos** you must act on *and* **dated
+  events** like flights, reservations, and appointments (pulled from
+  confirmations/itineraries), which you confirm into your calendar with one tap.
+  You can also attach a PDF/txt/md (e.g. a syllabus) and confirm extracted
+  assignments the same way. Marketing/newsletters are ignored.
 
 ---
 
@@ -96,7 +103,59 @@ plan **with researched resources/links** uses web search, so that mode works
 only with **Claude or GPT**; schedule-only plans (and everything else) work with
 any provider.
 
-To build a distributable app: `npm run tauri build`.
+## Building a distributable app
+
+```bash
+npm run tauri build
+```
+
+Output lands in `src-tauri/target/release/bundle/` — on macOS an `Assistant.app`
+plus an `Assistant_<version>_<arch>.dmg` installer (drag into Applications).
+Run the built app for everyday use: it's the optimized release binary, so unlike
+`npm run tauri dev` there's no Rust compiler / dev server running — it starts
+fast and stays cool. It uses your real `assistant.db`.
+
+**Note:** the build is per-OS/per-chip (e.g. a macOS Apple-Silicon build only
+runs on Apple Silicon). Anyone who clones the repo builds it themselves via the
+steps above — the built app and the Rust `target/` cache are git-ignored, so a
+clone contains source only. They also supply their own Google OAuth `.env` and
+their own in-app LLM key. Prebuilt cross-platform installers via GitHub Releases
+are **not set up yet** (intentionally deferred).
+
+---
+
+## Demo mode
+
+To showcase the app without touching your real data (and without connecting
+Google), run:
+
+```bash
+npm run demo            # = VITE_DEMO=1 npm run tauri dev
+```
+
+Demo mode:
+
+- uses a **separate database** (`assistant-demo.db`) — your real `assistant.db`
+  is never read or written;
+- **seeds realistic sample data** on first launch (goals with weekly/monthly/
+  daily plans, a researched plan with links, local commitments incl. a flight,
+  memories, today's briefing, and Inbox candidates);
+- **skips Google sign-in**, so the full UI shows offline (live calendar/email
+  calls simply return nothing; the seeded briefing and inbox render without a
+  network).
+
+**LLM key:** provider keys live in the database, which is separate in demo mode,
+so the demo starts with **no key** — open **Settings (⚙)**, paste a key, **Save**,
+and the model becomes selectable. To skip that, pass a key when launching and the
+demo pre-selects it:
+
+```bash
+VITE_DEMO_KEY=sk-ant-... npm run demo          # defaults to Claude
+VITE_DEMO_KEY=sk-... VITE_DEMO_PROVIDER=openai npm run demo
+```
+
+Seeding runs only when the demo DB is empty — delete `assistant-demo.db` (in the
+app-data dir) to reseed. Package a standalone demo build with `npm run demo:build`.
 
 ---
 

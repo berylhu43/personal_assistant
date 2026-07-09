@@ -346,6 +346,9 @@ pub fn run() {
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:assistant.db", migrations())
+                // Demo mode (VITE_DEMO=1, see db.ts) opens a separate DB file;
+                // register the same migrations for it so it's set up on first use.
+                .add_migrations("sqlite:assistant-demo.db", migrations())
                 .build(),
         )
         .plugin(tauri_plugin_store::Builder::default().build())

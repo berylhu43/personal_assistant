@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "demo": "VITE_DEMO=1 tauri dev",
+    "demo:build": "VITE_DEMO=1 tauri build"
   },
   "dependencies": {
     "@choochmeque/tauri-plugin-google-auth-api": "0.5.1",

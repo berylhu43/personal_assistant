@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import * as auth from "./lib/auth";
 import { initApp } from "./lib/init";
+import { IS_DEMO, seedDemoData } from "./lib/demo";
 import { getApiKey, type PendingPlan } from "./lib/store";
 import { getTodayEvents, getPendingEmails } from "./lib/google";
 import { getTeamsMessages } from "./lib/teams";
@@ -193,7 +194,15 @@ export default function App() {
         await initApp();
         const u = await auth.getCurrentUser();
         setUser(u);
-        if (u && (await auth.isGoogleConnected())) {
+        // Demo mode: seed sample data once and skip the Google sign-in gate so
+        // the whole UI shows offline (Google calls in loadDayData fail-soft to
+        // empty; the seeded briefing/inbox render without any network).
+        if (IS_DEMO && u) {
+          await seedDemoData(u.id).catch((e) =>
+            console.error("[demo] seed failed:", e)
+          );
+          await finishSignIn(u);
+        } else if (u && (await auth.isGoogleConnected())) {
           await finishSignIn(u);
         } else {
           setStatus("signed-out");

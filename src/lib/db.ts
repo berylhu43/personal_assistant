@@ -5,9 +5,16 @@ import Database from "@tauri-apps/plugin-sql";
 
 let dbPromise: Promise<Database> | null = null;
 
+// Demo mode (VITE_DEMO=1) uses a SEPARATE database file so the showcase never
+// touches your real data. Migrations for both names are registered in lib.rs.
+const DB_FILE =
+  import.meta.env.VITE_DEMO === "1" || import.meta.env.VITE_DEMO === "true"
+    ? "assistant-demo.db"
+    : "assistant.db";
+
 export function getDb(): Promise<Database> {
   if (!dbPromise) {
-    dbPromise = Database.load("sqlite:assistant.db");
+    dbPromise = Database.load(`sqlite:${DB_FILE}`);
   }
   return dbPromise;
 }
