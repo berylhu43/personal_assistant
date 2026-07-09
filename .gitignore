@@ -22,3 +22,6 @@ settings.json
 # Rust / Tauri build artifacts
 src-tauri/target
 src-tauri/gen
+
+# Demo / screen recordings (large binaries — keep out of git)
+*.mov
